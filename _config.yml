@@ -1,3 +1,3 @@
 title: Image Scale Metadata
 description: An open format for carrying the true scale of an image inside the image file.
-exclude: [test, tools, package.json, package-lock.json, node_modules, README.md]
+exclude: [test/, tools/, package.json, package-lock.json, node_modules/, README.md]
