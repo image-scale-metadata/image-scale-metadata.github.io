@@ -1,0 +1,9 @@
+{
+  "name": "image-scale-metadata",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Image Scale Metadata (ISM): an open format for the scale an image carries in its own metadata. Reference reader, writer and viewer.",
+  "license": "MIT",
+  "scripts": { "test": "node --test test/*.test.mjs" }
+}

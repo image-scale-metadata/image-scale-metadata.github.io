@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Image Scale Metadata — viewer</title>
+<meta name="description" content="Open an image and see its true scale, read from the Image Scale Metadata in the file itself.">
+<style>
+  :root {
+    --bg: #fafafa; --panel: #ffffff; --ink: #161616; --muted: #6b6b6b; --line: #e3e3e3;
+    --ok: #1f7a4d; --bad: #b3261e; --accent: #0b57d0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111; --panel: #1a1a1a; --ink: #eee; --muted: #9a9a9a; --line: #2c2c2c; --ok: #5cc38f; --bad: #ff8a80; --accent: #8ab4f8; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+  header { padding: 20px 24px 8px; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 14px; max-width: 70ch; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; padding: 16px 24px 32px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .stage { position: relative; min-height: 60vh; border: 1px dashed var(--line); background: var(--panel); display: flex; align-items: center; justify-content: center; }
+  .stage.drag { border-color: var(--accent); }
+  .empty { text-align: center; color: var(--muted); padding: 32px; }
+  .empty label { color: var(--accent); cursor: pointer; text-decoration: underline; }
+  .frame { position: relative; line-height: 0; max-width: 100%; }
+  .frame img { max-width: 100%; max-height: 78vh; display: block; }
+  .frame svg { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+  aside { background: var(--panel); border: 1px solid var(--line); padding: 16px; font-size: 14px; align-self: start; }
+  aside h2 { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 16px 0 6px; font-weight: 600; }
+  aside h2:first-child { margin-top: 0; }
+  .status { padding: 10px 12px; border-left: 3px solid var(--muted); background: var(--bg); }
+  .status.ok { border-color: var(--ok); } .status.bad { border-color: var(--bad); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 0; }
+  dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+  .hint { color: var(--muted); font-size: 13px; }
+  footer { padding: 0 24px 24px; color: var(--muted); font-size: 12px; }
+  code { font-size: 12.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Image Scale Metadata — viewer</h1>
+  <p>Open an image. If it carries Image Scale Metadata, the scale is read from the file itself and drawn on the picture — no ruler in the frame, no software from the maker needed. Nothing is uploaded: the file is read in your browser.</p>
+</header>
+<main>
+  <div class="stage" id="stage">
+    <div class="empty" id="empty">
+      Drop an image here, or <label>choose a file<input type="file" id="file" accept="image/*" hidden></label>.
+      <br><span class="hint">JPEG, TIFF, PNG or WebP with ISM fields in its XMP.</span>
+    </div>
+  </div>
+  <aside id="panel">
+    <h2>Scale</h2>
+    <div class="status" id="status">No image open.</div>
+    <div id="details"></div>
+  </aside>
+</main>
+<footer>
+  <a href="../">Image Scale Metadata, draft 0.1</a> — the specification. Namespace <code>https://w3id.org/ism/0.1/</code>. Viewer and library under the MIT licence.
+</footer>
+<script type="module" src="./viewer.js"></script>
+</body>
+</html>
