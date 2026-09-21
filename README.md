@@ -38,7 +38,7 @@ been cropped or changed.
 | Path | What |
 |---|---|
 | `js/ism.js` | Reference reader and writer, no dependencies, browser and Node 18+ |
-| `viewer/` | A web page that opens an image, reads its ISM and draws the scale. Nothing is uploaded |
+| `viewer/` | A web page that opens an image, reads its ISM and draws the scale — and, for a JPEG with a ruler in the picture, writes the scale into the file: drag along the ruler, give its length, download. Other metadata in the file is kept. Nothing is uploaded |
 | `tools/make-testfiles.mjs` | Makes test files (measured, resized, turned, cropped, none) from one measured JPEG (macOS) |
 | `testfiles/` | Test files made from a published find, with the expected result for each |
 | `test/` | Tests: `npm test` |

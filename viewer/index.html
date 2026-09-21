@@ -37,12 +37,19 @@
   .hint { color: var(--muted); font-size: 13px; }
   footer { padding: 0 24px 24px; color: var(--muted); font-size: 12px; }
   code { font-size: 12.5px; }
+  .writer-form { display: grid; gap: 10px; margin-top: 4px; }
+  .writer-form label { display: grid; gap: 4px; color: var(--muted); font-size: 13px; }
+  .writer-form input, .writer-form select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); padding: 7px 9px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  button { font: inherit; font-size: 14px; background: var(--ink); color: var(--bg); border: 1px solid var(--ink); padding: 8px 12px; cursor: pointer; }
+  button.secondary { background: transparent; color: var(--ink); border-color: var(--line); }
+  #writer > button { margin-top: 4px; }
 </style>
 </head>
 <body>
 <header>
   <h1>Image Scale Metadata — viewer</h1>
-  <p>Open an image. If it carries Image Scale Metadata, the scale is read from the file itself and drawn on the picture — no ruler in the frame, no software from the maker needed. Nothing is uploaded: the file is read in your browser.</p>
+  <p>Open an image. If it carries Image Scale Metadata, the scale is read from the file itself and drawn on the picture — no software from the maker needed. If it has a ruler in the picture but no scale, measure the ruler once and download the picture with its scale written in. Nothing is uploaded: the file is read and written in your browser.</p>
 </header>
 <main>
   <div class="stage" id="stage">
@@ -55,6 +62,7 @@
     <h2>Scale</h2>
     <div class="status" id="status">No image open.</div>
     <div id="details"></div>
+    <div id="writer"></div>
   </aside>
 </main>
 <footer>

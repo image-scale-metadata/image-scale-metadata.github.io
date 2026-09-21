@@ -2,7 +2,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  ISM_NS, embedXmpInJpeg, findXmp, niceLength, parseIsm, readIsm, scaleFor, validate, writeIsmXmp,
+  ISM_NS, embedXmpInJpeg, findXmp, jpegHasXmpSegment, jpegOrientation, mergeIsmIntoXmp, niceLength, parseIsm, readIsm,
+  scaleFor, validate, writeIsmXmp,
 } from '../js/ism.js'
 
 const FULL = {
@@ -77,4 +78,44 @@ test('embedded in a JPEG, replacing an older XMP, and read back from the bytes',
   assert.equal(readIsm(out).scale, 0.0428)
   assert.equal(new TextDecoder().decode(out).includes('>old<'), false, 'the old XMP is gone')
   assert.deepEqual([...out.subarray(-6)], [0xff, 0xda, 0, 2, 9, 9, 0xff, 0xd9].slice(-6), 'the image data is untouched')
+})
+
+test('merging keeps the file\'s own metadata and replaces older ISM', () => {
+  const museum = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/"
+      photoshop:Credit="Kalmar läns museum">
+      <dc:title><rdf:Alt><rdf:li xml:lang="x-default">Bronze bird</rdf:li></rdf:Alt></dc:title>
+    </rdf:Description>
+    <rdf:Description rdf:about="" xmlns:sc="${ISM_NS}" sc:version="0.1" sc:scale="0.5" sc:referenceWidth="10" sc:referenceHeight="10"/>
+  </rdf:RDF></x:xmpmeta>`
+  const merged = mergeIsmIntoXmp(museum, { scale: 0.037, referenceWidth: 1078, referenceHeight: 1077, method: 'ruler' })
+  assert.match(merged, /Bronze bird/)
+  assert.match(merged, /photoshop:Credit="Kalmar läns museum"/)
+  assert.deepEqual(parseIsm(merged), { version: '0.1', method: 'ruler', scale: 0.037, referenceWidth: 1078, referenceHeight: 1077 })
+  assert.equal((merged.match(/https:\/\/w3id\.org\/ism\/0\.1\//g) || []).length, 1, 'one ISM namespace, the old one gone')
+  assert.doesNotMatch(merged, /sc:/)
+})
+
+test('merging into a packet that shares its Description with other fields keeps them', () => {
+  const shared = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about="" xmlns:photarch="https://photarch.com/ns/" xmlns:ism="${ISM_NS}"
+      photarch:widthMm="28" ism:version="0.1" ism:scale="0.03" ism:referenceWidth="100" ism:referenceHeight="50">
+      <ism:objectBox><rdf:Seq><rdf:li>1</rdf:li><rdf:li>2</rdf:li><rdf:li>3</rdf:li><rdf:li>4</rdf:li></rdf:Seq></ism:objectBox>
+    </rdf:Description></rdf:RDF></x:xmpmeta>`
+  const merged = mergeIsmIntoXmp(shared, { scale: 0.04, referenceWidth: 100, referenceHeight: 50 })
+  assert.match(merged, /photarch:widthMm="28"/)
+  assert.deepEqual(parseIsm(merged), { version: '0.1', scale: 0.04, referenceWidth: 100, referenceHeight: 50 })
+})
+
+test('EXIF orientation is read, and an XMP segment is noticed', () => {
+  // SOI, APP1 Exif (big-endian TIFF, IFD0 with one entry: Orientation = 6), SOS, EOI.
+  const tiff = [0x4d, 0x4d, 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0]
+  const body = [0x45, 0x78, 0x69, 0x66, 0, 0, ...tiff]
+  const len = 2 + body.length
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe1, len >> 8, len & 0xff, ...body, 0xff, 0xda, 0, 2, 0xff, 0xd9])
+  assert.equal(jpegOrientation(jpeg), 6)
+  assert.equal(jpegOrientation(new Uint8Array([0xff, 0xd8, 0xff, 0xda, 0, 2])), 1)
+  assert.equal(jpegHasXmpSegment(jpeg), false)
+  assert.equal(jpegHasXmpSegment(embedXmpInJpeg(jpeg, writeIsmXmp({ scale: 1, referenceWidth: 1, referenceHeight: 1 }))), true)
+  assert.equal(jpegOrientation(embedXmpInJpeg(jpeg, writeIsmXmp({ scale: 1, referenceWidth: 1, referenceHeight: 1 }))), 6, 'Exif kept')
 })

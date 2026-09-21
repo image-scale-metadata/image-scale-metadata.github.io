@@ -157,6 +157,19 @@ const escapeXml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').re
  * incomplete: a writer writes all four or none (§5.1).
  */
 export function writeIsmXmp(fields) {
+  return wrapPacket(`<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    ${ismDescription(fields)}
+  </rdf:RDF>
+</x:xmpmeta>`)
+}
+
+const wrapPacket = xmpmeta => `<?xpacket begin="\uFEFF" id="W5M0MpCehiHzreSzNTczkc9d"?>
+${xmpmeta}
+<?xpacket end="w"?>`
+
+/** The rdf:Description holding the ISM fields, checked first (§5.1). */
+function ismDescription(fields) {
   const f = { version: ISM_VERSION, ...fields }
   const problems = validate(f)
   if (problems.length) throw new Error(problems.join(' '))
@@ -166,14 +179,74 @@ export function writeIsmXmp(fields) {
   const box = f.objectBox
     ? `\n      <ism:objectBox>\n        <rdf:Seq>${f.objectBox.map(n => `<rdf:li>${Math.round(n)}</rdf:li>`).join('')}</rdf:Seq>\n      </ism:objectBox>\n    `
     : ''
-  return `<?xpacket begin="\uFEFF" id="W5M0MpCehiHzreSzNTczkc9d"?>
-<x:xmpmeta xmlns:x="adobe:ns:meta/">
-  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-    <rdf:Description rdf:about=""
-        xmlns:ism="${ISM_NS}"${attrs}${box ? `>${box}</rdf:Description>` : '/>'}
-  </rdf:RDF>
-</x:xmpmeta>
-<?xpacket end="w"?>`
+  return `<rdf:Description rdf:about=""
+        xmlns:ism="${ISM_NS}"${attrs}${box ? `>${box}</rdf:Description>` : '/>'}`
+}
+
+/**
+ * An XMP packet with the ISM fields set and everything else kept: a file's own
+ * title, rights, keywords and camera data survive. Any ISM fields already there
+ * are replaced, not duplicated. `xmp` is the file's packet (findXmp), or null.
+ */
+export function mergeIsmIntoXmp(xmp, fields) {
+  if (!xmp) return writeIsmXmp(fields)
+  if (!/<\/rdf:RDF>/.test(xmp)) throw new Error('The file\'s XMP has no rdf:RDF to add to.')
+  let out = xmp
+  const binding = new RegExp(`\\sxmlns:([A-Za-z_][\\w.-]*)\\s*=\\s*["']${ISM_NS.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}["']`).exec(out)
+  if (binding) {
+    const p = binding[1]
+    out = out
+      .replace(new RegExp(`<${p}:objectBox>[\\s\\S]*?</${p}:objectBox>`, 'g'), '')
+      .replace(new RegExp(`<${p}:(\\w+)>[^<]*</${p}:\\1>`, 'g'), '')
+      .replace(new RegExp(`\\s${p}:\\w+\\s*=\\s*("[^"]*"|'[^']*')`, 'g'), '')
+      .replace(new RegExp(`\\sxmlns:${p}\\s*=\\s*("[^"]*"|'[^']*')`, 'g'), '')
+      // A Description left with nothing but rdf:about goes too.
+      .replace(/<rdf:Description\s+rdf:about=(""|'')\s*\/>/g, '')
+      .replace(/<rdf:Description\s+rdf:about=(""|'')\s*>\s*<\/rdf:Description>/g, '')
+  }
+  out = out.replace(/<\/rdf:RDF>/, `  ${ismDescription(fields)}\n  </rdf:RDF>`)
+  return wrapPacket(out)
+}
+
+/**
+ * The EXIF orientation of a JPEG, 1–8, or 1 when there is none. 5–8 mean the
+ * stored pixels are turned by 90° against how the picture is shown, so the
+ * reference grid (§3, stored) is the shown width and height swapped.
+ */
+export function jpegOrientation(jpeg) {
+  const u8 = jpeg instanceof Uint8Array ? jpeg : new Uint8Array(jpeg)
+  let i = 2
+  while (i + 4 <= u8.length && u8[i] === 0xff) {
+    const marker = u8[i + 1]
+    if (marker === 0xda) break
+    const len = (u8[i + 2] << 8) | u8[i + 3]
+    if (marker === 0xe1 && u8[i + 4] === 0x45 && u8[i + 5] === 0x78 && u8[i + 6] === 0x69 && u8[i + 7] === 0x66) {
+      const t = i + 10 // TIFF header after "Exif\0\0"
+      const le = u8[t] === 0x49
+      const r16 = o => le ? u8[o] | (u8[o + 1] << 8) : (u8[o] << 8) | u8[o + 1]
+      const r32 = o => le ? (u8[o] | (u8[o + 1] << 8) | (u8[o + 2] << 16) | (u8[o + 3] << 24)) >>> 0
+        : ((u8[o] << 24) | (u8[o + 1] << 16) | (u8[o + 2] << 8) | u8[o + 3]) >>> 0
+      const ifd = t + r32(t + 4)
+      const n = r16(ifd)
+      for (let k = 0; k < n; k++) {
+        const e = ifd + 2 + k * 12
+        if (e + 12 > u8.length) break
+        if (r16(e) === 0x0112) {
+          const v = r16(e + 8)
+          return v >= 1 && v <= 8 ? v : 1
+        }
+      }
+      return 1
+    }
+    i += 2 + len
+  }
+  return 1
+}
+
+/** Whether a JPEG has an XMP segment at all (whether or not it can be read). */
+export function jpegHasXmpSegment(jpeg) {
+  const u8 = jpeg instanceof Uint8Array ? jpeg : new Uint8Array(jpeg)
+  return indexOf(u8, ascii('http://ns.adobe.com/xap/1.0/\0')) >= 0
 }
 
 /**

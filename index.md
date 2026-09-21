@@ -11,7 +11,7 @@ title: Image Scale Metadata (ISM) 0.1
 **Editor:** Daniel Lindskog (PHOTARCH).
 **Licence:** this specification, CC BY 4.0; the code in this repository, MIT.
 
-**Try it:** the [viewer](viewer/) opens an image and draws its scale from the file itself.
+**Try it:** the [viewer](viewer/) opens an image and draws its scale from the file itself. It also writes the scale into an older picture that has a ruler in it: measure the ruler once, and the file carries its scale from then on.
 [Test files](https://github.com/image-scale-metadata/image-scale-metadata.github.io/tree/main/testfiles)
 and the [reference library](https://github.com/image-scale-metadata/image-scale-metadata.github.io/blob/main/js/ism.js)
 are in the [repository](https://github.com/image-scale-metadata/image-scale-metadata.github.io).
