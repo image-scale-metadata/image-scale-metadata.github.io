@@ -61,7 +61,7 @@ import into another system.
 ISM fields live in an XMP namespace of their own, so they travel with JPEG, TIFF, PNG,
 WebP, HEIF, DNG and PDF, and are kept by the tools that keep XMP.
 
-- **Namespace URI:** `https://w3id.org/ism/0.1/` *(to be registered; see §10)*
+- **Namespace URI:** `https://w3id.org/ism/0.1/` — registered at w3id.org; it resolves to this specification.
 - **Preferred prefix:** `ism`
 
 ### 4.1 Core — required
@@ -243,8 +243,8 @@ a writer or reader conforms when it passes them.
   copies with the answer a reader must give for each.
 - A **validator**: a web page where a file can be dropped and checked.
 - A **viewer demo**: a plain web page, not PHOTARCH, that opens a file and draws its scale.
-- The namespace registered at a neutral address (w3id.org) that does not depend on any
-  company.
+- The namespace at a neutral address that does not depend on any company: done in 0.1,
+  `https://w3id.org/ism/`.
 
 ## 11. Governance (to be agreed with an academic partner)
 
@@ -264,4 +264,5 @@ a writer or reader conforms when it passes them.
 4. **Relation to 3D**: should a model's units (GLB in millimetres) be described in the
    same namespace?
 5. **Name**: "Image Scale Metadata" is a working name. Decide with the partner.
-6. **Where the namespace lives**: w3id.org, a university address, or a IIIF community page.
+6. **Where the namespace lives**: settled at w3id.org, which can be pointed at a university
+   address later without changing any file.

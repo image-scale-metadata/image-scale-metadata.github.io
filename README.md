@@ -15,7 +15,7 @@ a pixel is, so every viewer shows true size.
 ## The fields
 
 Four required fields, in the file's XMP, namespace `https://w3id.org/ism/0.1/`
-(placeholder until registered):
+(registered at w3id.org; https://w3id.org/ism/ leads here):
 
 | Field | Meaning |
 |---|---|
