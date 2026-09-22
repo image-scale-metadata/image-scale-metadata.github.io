@@ -64,3 +64,8 @@ it must come out at 50 mm in every file that has a scale.
 `node tools/make-testfiles.mjs <photograph.jpg> <mm-per-px>` makes the JPEG set from a photograph
 of your own; `node tools/make-raster-testfiles.mjs` makes the PNG and TIFF set from nothing at all.
 Both use the reference writer, so the files and the library cannot drift apart.
+
+The answers above are also the Python library's test suite
+(`python3 -m unittest discover -s python`): the files are written by the JavaScript implementation
+and read by the Python one, which is how two implementations of one format are kept honest. Anyone
+implementing ISM is welcome to do the same with theirs.

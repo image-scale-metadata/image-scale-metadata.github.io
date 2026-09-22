@@ -262,8 +262,11 @@ a writer or reader conforms when it passes them.
 ## 10. What will be published with 1.0
 
 - This specification, versioned, under **CC BY 4.0**, with a DOI (Zenodo).
-- A **reference library** that reads and writes ISM — JavaScript today, Python and Swift to
-  come — under **MIT**. *(JavaScript: done in 0.1; it reads and writes JPEG, PNG and TIFF.)*
+- A **reference library** that reads and writes ISM — under **MIT**.
+  *(Done in 0.1: [JavaScript](https://github.com/image-scale-metadata/image-scale-metadata.github.io/blob/main/js/ism.js)
+  and [Python](https://github.com/image-scale-metadata/image-scale-metadata.github.io/blob/main/python/ism.py),
+  both reading and writing JPEG, PNG and TIFF, and checked against each other by the test files.
+  Swift to come.)*
 - **Test files** with the answer a reader must give for each. *(Done in 0.1:
   [the set](testfiles/) covers JPEG, PNG and TIFF, resized, turned and cropped.)*
 - A **validator**: a web page where a file can be dropped and checked.
