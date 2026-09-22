@@ -5,25 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Image Scale Metadata — viewer</title>
 <meta name="description" content="Open an image and see its true scale, read from the Image Scale Metadata in the file itself.">
+<link rel="stylesheet" href="../assets/ism.css">
 <style>
-  :root {
-    --bg: #fafafa; --panel: #ffffff; --ink: #161616; --muted: #6b6b6b; --line: #e3e3e3;
-    --ok: #1f7a4d; --bad: #b3261e; --accent: #0b57d0;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #111; --panel: #1a1a1a; --ink: #eee; --muted: #9a9a9a; --line: #2c2c2c; --ok: #5cc38f; --bad: #ff8a80; --accent: #8ab4f8; }
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
-  header { padding: 20px 24px 8px; }
-  h1 { font-size: 18px; font-weight: 600; margin: 0; }
-  header p { margin: 4px 0 0; color: var(--muted); font-size: 14px; max-width: 70ch; }
-  main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; padding: 16px 24px 32px; }
+  /* The viewer's own furniture. Colours, type and rules come from the site's
+     stylesheet, so the specification and the viewer read as one page. */
+  /* Wider than the specification: this page shows pictures, not prose. */
+  .masthead__inner, .lede, main, .colophon__inner { max-width: 68rem; }
+* { box-sizing: border-box; }
+  .lede { margin: 0 auto; max-width: 52rem; padding: 2.25rem 1.5rem 0.5rem; }
+  .lede h1 { margin: 0 0 .5rem; font-size: 1.5rem; font-weight: 300; letter-spacing: -.01em; }
+  .lede p { margin: 0; color: var(--muted); max-width: 34rem; font-size: .9375rem; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; margin: 0 auto; padding: 1rem 1.5rem 2.5rem; }
   @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
   .stage { position: relative; min-height: 60vh; border: 1px dashed var(--line); background: var(--panel); display: flex; align-items: center; justify-content: center; }
-  .stage.drag { border-color: var(--accent); }
+  .stage.drag { border-color: var(--ink); }
   .empty { text-align: center; color: var(--muted); padding: 32px; }
-  .empty label { color: var(--accent); cursor: pointer; text-decoration: underline; }
+  .empty label { color: var(--ink); cursor: pointer; text-decoration: underline; text-underline-offset: .18em; }
   .frame { position: relative; line-height: 0; max-width: 100%; }
   .frame img { max-width: 100%; max-height: 78vh; display: block; }
   .frame svg { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
@@ -35,7 +32,6 @@
   dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 0; }
   dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
   .hint { color: var(--muted); font-size: 13px; }
-  footer { padding: 0 24px 24px; color: var(--muted); font-size: 12px; }
   code { font-size: 12.5px; }
   .writer-form { display: grid; gap: 10px; margin-top: 4px; }
   .writer-form label { display: grid; gap: 4px; color: var(--muted); font-size: 13px; }
@@ -47,10 +43,22 @@
 </style>
 </head>
 <body>
-<header>
-  <h1>Image Scale Metadata — viewer</h1>
-  <p>Open an image. If it carries Image Scale Metadata, the scale is read from the file itself and drawn on the picture — no software from the maker needed. If it has a ruler in the picture but no scale, measure the ruler once and download the picture with its scale written in. Nothing is uploaded: the file is read and written in your browser.</p>
+<header class="masthead">
+  <div class="masthead__inner">
+    <p class="masthead__name"><a href="../">Image Scale Metadata</a></p>
+    <nav class="masthead__nav">
+      <a href="../">Specification</a>
+      <a href="./">Viewer</a>
+      <a href="https://github.com/image-scale-metadata/image-scale-metadata.github.io/tree/main/testfiles">Test files</a>
+      <a href="https://github.com/image-scale-metadata/image-scale-metadata.github.io">Repository</a>
+    </nav>
+  </div>
 </header>
+
+<div class="lede">
+  <h1>Viewer</h1>
+  <p>Open an image. If it carries Image Scale Metadata, the scale is read from the file itself and drawn on the picture — no software from the maker needed. If it has a ruler in the picture but no scale, measure the ruler once and download the picture with its scale written in. Nothing is uploaded: the file is read and written in your browser.</p>
+</div>
 <main>
   <div class="stage" id="stage">
     <div class="empty" id="empty">
@@ -65,8 +73,11 @@
     <div id="writer"></div>
   </aside>
 </main>
-<footer>
-  <a href="../">Image Scale Metadata, draft 0.1</a> — the specification. Namespace <code>https://w3id.org/ism/0.1/</code>. Viewer and library under the MIT licence.
+<footer class="colophon">
+  <div class="colophon__inner">
+    <span><a href="../">Image Scale Metadata, draft 0.1</a> — the specification. Viewer and library under the MIT licence.</span>
+    <span>Namespace: <a href="https://w3id.org/ism/">w3id.org/ism</a></span>
+  </div>
 </footer>
 <script type="module" src="./viewer.js"></script>
 </body>

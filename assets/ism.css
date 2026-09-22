@@ -1,0 +1,227 @@
+/* Image Scale Metadata — the site's one stylesheet.
+ *
+ * The look is deliberately plain: a standard should not look like a product.
+ * No logo, no brand colour, nothing that says one implementer owns the format.
+ * What it does carry is craft — a measured line length, quiet greys, hairline
+ * rules, and the same face in light and dark. The viewer uses the same tokens,
+ * so the two pages read as one.
+ */
+
+:root {
+  --ink: #171717;
+  --muted: #6b6b6b;
+  --faint: #8e8e8e;
+  --bg: #ffffff;
+  --panel: #fafafa;
+  --line: #e4e4e4;
+  --rule: #111111;
+  --ok: #1f7a4d;
+  --bad: #b3261e;
+  --link: #171717;
+  --measure: 34rem;
+  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #ededed;
+    --muted: #a0a0a0;
+    --faint: #8a8a8a;
+    --bg: #101010;
+    --panel: #171717;
+    --line: #2a2a2a;
+    --rule: #ededed;
+    --ok: #5cc38f;
+    --bad: #ff8a80;
+    --link: #ededed;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.65;
+  font-weight: 350;
+  letter-spacing: 0.005em;
+}
+
+/* ── The masthead ─────────────────────────────────────────────────────────── */
+
+.masthead {
+  border-bottom: 1px solid var(--line);
+}
+
+.masthead__inner,
+.page,
+.colophon__inner {
+  margin: 0 auto;
+  max-width: 52rem;
+  padding: 0 1.5rem;
+}
+
+.masthead__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem 2rem;
+  padding-top: 1.25rem;
+  padding-bottom: 1.25rem;
+}
+
+.masthead__name {
+  margin: 0;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.masthead__name a { color: inherit; text-decoration: none; }
+
+.masthead__nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+}
+
+.masthead__nav a {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  padding-bottom: 1px;
+}
+
+.masthead__nav a:hover { color: var(--ink); border-bottom-color: var(--line); }
+
+/* ── The page ─────────────────────────────────────────────────────────────── */
+
+.page { padding-top: 3.5rem; padding-bottom: 4rem; }
+
+.page > * { max-width: var(--measure); }
+.page pre, .page > table, .page > .wide { max-width: 100%; }
+
+.page h1 {
+  max-width: 28rem;
+  margin: 0 0 1.5rem;
+  font-size: clamp(1.75rem, 1.2rem + 2vw, 2.5rem);
+  font-weight: 300;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+}
+
+.page h2 {
+  margin: 3.5rem 0 1rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+  font-size: 1.0625rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.page h3 {
+  margin: 2.25rem 0 0.75rem;
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+
+.page h1, .page h2, .page h3, .page p, .page ul, .page ol, .page blockquote { max-width: var(--measure); }
+.page li { color: var(--ink); }
+
+.page p { margin: 0 0 1.25rem; }
+
+.page a { color: var(--link); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 0.18em; text-decoration-color: var(--line); }
+.page a:hover { text-decoration-color: currentColor; }
+
+.page ul, .page ol { margin: 0 0 1.25rem; padding-left: 1.25rem; }
+.page li { margin: 0.35rem 0; }
+
+.page strong { font-weight: 600; }
+
+code, kbd, samp, pre { font-family: var(--mono); }
+
+.page code {
+  font-size: 0.85em;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 0.08em 0.3em;
+}
+
+.page pre {
+  max-width: 100%;
+  overflow-x: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 1rem 1.15rem;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.page pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+
+.page blockquote {
+  margin: 1.5rem 0;
+  padding-left: 1rem;
+  border-left: 2px solid var(--rule);
+  color: var(--muted);
+}
+
+.page table {
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  font-size: 0.875rem;
+}
+
+.page th, .page td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.55rem 0.75rem 0.55rem 0;
+  text-align: left;
+  vertical-align: top;
+}
+
+.page th {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  border-bottom-color: var(--rule);
+}
+
+.page hr { border: 0; border-top: 1px solid var(--line); margin: 3rem 0; }
+
+/* ── The colophon ─────────────────────────────────────────────────────────── */
+
+.colophon {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.colophon__inner {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem 2rem;
+  padding-top: 1.5rem;
+  padding-bottom: 2.5rem;
+}
+
+.colophon a { color: inherit; }
+
+@media (max-width: 40rem) {
+  body { font-size: 15.5px; }
+  .page { padding-top: 2.5rem; }
+}
