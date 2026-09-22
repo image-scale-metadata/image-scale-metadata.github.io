@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Image Scale Metadata — validator</title>
+<meta name="description" content="Drop an image and see whether its Image Scale Metadata is correct, and at which level it conforms.">
+<meta name="color-scheme" content="light dark">
+<link rel="stylesheet" href="../assets/ism.css">
+<style>
+  /* The validator's own furniture. Colours and type come from the site's stylesheet. */
+  .lede { margin: 0 auto; max-width: 52rem; padding: 2.25rem 1.5rem 0.5rem; }
+  .lede h1 { margin: 0 0 .5rem; font-size: 1.5rem; font-weight: 300; letter-spacing: -.01em; }
+  .lede p { margin: 0; color: var(--muted); max-width: 34rem; font-size: .9375rem; }
+  main { margin: 0 auto; max-width: 52rem; padding: 1.25rem 1.5rem 3rem; }
+  .drop {
+    border: 1px dashed var(--line); background: var(--panel); padding: 2.5rem 1.5rem; text-align: center;
+    color: var(--muted); font-size: .9375rem;
+  }
+  .drop.over { border-color: var(--ink); color: var(--ink); }
+  .drop label { color: var(--ink); text-decoration: underline; text-underline-offset: .18em; cursor: pointer; }
+  .verdict { margin-top: 1.5rem; border: 1px solid var(--line); }
+  .verdict__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem 1rem; padding: 1rem 1.25rem; border-bottom: 1px solid var(--line); }
+  .verdict__level { font-size: 1.25rem; font-weight: 300; }
+  .verdict__file { color: var(--muted); font-size: .8125rem; overflow-wrap: anywhere; }
+  .checks { margin: 0; padding: 0; list-style: none; }
+  .checks li { display: grid; grid-template-columns: 1.25rem 1fr; gap: .75rem; padding: .7rem 1.25rem; border-bottom: 1px solid var(--line); font-size: .875rem; }
+  .checks li:last-child { border-bottom: 0; }
+  .mark { font-size: .75rem; line-height: 1.7; }
+  .pass .mark { color: var(--ok); } .fail .mark { color: var(--bad); } .skip .mark { color: var(--faint); }
+  .checks b { font-weight: 500; display: block; }
+  .checks span { color: var(--muted); }
+  .fields { margin-top: 1.5rem; font-size: .8125rem; }
+  .fields h2 { font-size: .6875rem; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); font-weight: 500; margin: 0 0 .5rem; }
+  .fields dl { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: 0; }
+  .fields dt { color: var(--muted); } .fields dd { margin: 0; overflow-wrap: anywhere; font-family: var(--mono); font-size: .75rem; }
+  .hint { color: var(--faint); font-size: .75rem; margin-top: .75rem; }
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead__inner">
+    <p class="masthead__name"><a href="../">Image Scale Metadata</a></p>
+    <nav class="masthead__nav">
+      <a href="../">Specification</a>
+      <a href="../viewer/">Viewer</a>
+      <a href="./">Validator</a>
+      <a href="../testfiles/">Test files</a>
+      <a href="https://github.com/image-scale-metadata/image-scale-metadata.github.io">Repository</a>
+    </nav>
+  </div>
+</header>
+
+<div class="lede">
+  <h1>Validator</h1>
+  <p>Drop an image and see whether it carries Image Scale Metadata, whether the fields are correct, and at which level it conforms — A, B or C. Nothing is uploaded: the file is read in your browser.</p>
+</div>
+
+<main>
+  <div class="drop" id="drop">
+    Drop an image here, or <label>choose a file<input type="file" id="file" accept="image/*" hidden></label>.
+    <div class="hint">JPEG, PNG, TIFF, WebP or HEIF. The <a href="../testfiles/">test files</a> are a good place to start.</div>
+  </div>
+  <div id="report"></div>
+</main>
+
+<footer class="colophon">
+  <div class="colophon__inner">
+    <span><a href="../">Image Scale Metadata, draft 0.1</a> — the specification. Validator and library under the MIT licence.</span>
+    <span>Namespace: <a href="https://w3id.org/ism/">w3id.org/ism</a></span>
+  </div>
+</footer>
+
+<script type="module" src="./validator.js"></script>
+</body>
+</html>

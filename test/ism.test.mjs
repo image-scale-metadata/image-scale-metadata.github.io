@@ -5,6 +5,7 @@ import {
   ISM_NS, embedXmpInJpeg, findXmp, jpegHasXmpSegment, jpegOrientation, mergeIsmIntoXmp, niceLength, parseIsm, readIsm,
   scaleFor, validate, writeIsmXmp,
 } from '../js/ism.js'
+import * as ism from '../js/ism.js'
 
 const FULL = {
   scale: 0.0428, referenceWidth: 1509, referenceHeight: 1509,
@@ -119,3 +120,112 @@ test('EXIF orientation is read, and an XMP segment is noticed', () => {
   assert.equal(jpegHasXmpSegment(embedXmpInJpeg(jpeg, writeIsmXmp({ scale: 1, referenceWidth: 1, referenceHeight: 1 }))), true)
   assert.equal(jpegOrientation(embedXmpInJpeg(jpeg, writeIsmXmp({ scale: 1, referenceWidth: 1, referenceHeight: 1 }))), 6, 'Exif kept')
 })
+
+test('written into a PNG, replacing an older packet, and read back', () => {
+  const png = makePng()
+  const first = ism.embedXmpInPng(png, ism.writeIsmXmp({ scale: 0.05, referenceWidth: 8, referenceHeight: 4, version: '0.1' }))
+  const second = ism.embedXmpInPng(first, ism.writeIsmXmp({ scale: 0.02, referenceWidth: 8, referenceHeight: 4, version: '0.1' }))
+  assert.equal(ism.readIsm(second).scale, 0.02)
+  // one packet, not two
+  assert.equal(countOf(second, 'XML:com.adobe.xmp'), 1)
+  // the picture itself is untouched
+  assert.ok(indexOfBytes(second, png.subarray(8, 33)) > 0)
+})
+
+test('written into a TIFF as tag 700, and read back', () => {
+  const tiff = makeTiff()
+  const out = ism.embedXmpInTiff(tiff, ism.writeIsmXmp({ scale: 0.1, referenceWidth: 4, referenceHeight: 2, version: '0.1' }))
+  assert.equal(ism.readIsm(out).scale, 0.1)
+  // the header points at a directory that now holds tag 700
+  const dv = new DataView(out.buffer, out.byteOffset)
+  const ifd = dv.getUint32(4, true)
+  const count = dv.getUint16(ifd, true)
+  const tags = Array.from({ length: count }, (_, i) => dv.getUint16(ifd + 2 + i * 12, true))
+  assert.ok(tags.includes(700), 'tag 700 is there')
+  assert.deepEqual(tags, [...tags].sort((a, b) => a - b), 'entries stay in tag order')
+  // writing again replaces it rather than adding a second
+  const again = ism.embedXmpInTiff(out, ism.writeIsmXmp({ scale: 0.2, referenceWidth: 4, referenceHeight: 2, version: '0.1' }))
+  const dv2 = new DataView(again.buffer, again.byteOffset)
+  const ifd2 = dv2.getUint32(4, true)
+  const count2 = dv2.getUint16(ifd2, true)
+  assert.equal(count2, count)
+  assert.equal(ism.readIsm(again).scale, 0.2)
+})
+
+test('embedXmp picks the format from the bytes', () => {
+  const xmp = ism.writeIsmXmp({ scale: 0.1, referenceWidth: 4, referenceHeight: 2, version: '0.1' })
+  for (const bytes of [makePng(), makeTiff()]) {
+    assert.equal(ism.readIsm(ism.embedXmp(bytes, xmp)).scale, 0.1)
+  }
+  assert.throws(() => ism.embedXmp(Uint8Array.from([1, 2, 3, 4]), xmp), /Unsupported format/)
+})
+
+// ── small files to write into ─────────────────────────────────────────────────
+
+function makePng() {
+  const chunk = (type, data) => {
+    const out = new Uint8Array(12 + data.length)
+    new DataView(out.buffer).setUint32(0, data.length)
+    out.set(Uint8Array.from(type, c => c.charCodeAt(0)), 4)
+    out.set(data, 8)
+    new DataView(out.buffer).setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)))
+    return out
+  }
+  const ihdr = new Uint8Array(13)
+  const dv = new DataView(ihdr.buffer)
+  dv.setUint32(0, 8); dv.setUint32(4, 4); ihdr[8] = 8; ihdr[9] = 2
+  const parts = [Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', Uint8Array.from([120, 1, 1, 0, 0, 255, 255, 0, 0, 0, 1])), chunk('IEND', new Uint8Array(0))]
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
+  let o = 0
+  for (const p of parts) { out.set(p, o); o += p.length }
+  return out
+}
+
+function makeTiff() {
+  const tags = [[256, 3, 1, 4], [257, 3, 1, 2], [258, 3, 1, 8], [259, 3, 1, 1], [262, 3, 1, 1], [273, 4, 1, 0], [277, 3, 1, 1], [279, 4, 1, 8]]
+  const ifdAt = 8
+  const pixelsAt = ifdAt + 2 + tags.length * 12 + 4
+  const out = new Uint8Array(pixelsAt + 8)
+  const dv = new DataView(out.buffer)
+  out[0] = 0x49; out[1] = 0x49
+  dv.setUint16(2, 42, true)
+  dv.setUint32(4, ifdAt, true)
+  dv.setUint16(ifdAt, tags.length, true)
+  tags.forEach(([tag, type, count, value], i) => {
+    const at = ifdAt + 2 + i * 12
+    dv.setUint16(at, tag, true); dv.setUint16(at + 2, type, true); dv.setUint32(at + 4, count, true)
+    if (tag === 273) dv.setUint32(at + 8, pixelsAt, true)
+    else if (type === 3) dv.setUint16(at + 8, value, true)
+    else dv.setUint32(at + 8, value, true)
+  })
+  dv.setUint32(ifdAt + 2 + tags.length * 12, 0, true)
+  return out
+}
+
+function countOf(bytes, text) {
+  const needle = Uint8Array.from(text, c => c.charCodeAt(0))
+  let n = 0
+  for (let i = 0; i <= bytes.length - needle.length; i++) {
+    let hit = true
+    for (let j = 0; j < needle.length; j++) if (bytes[i + j] !== needle[j]) { hit = false; break }
+    if (hit) n++
+  }
+  return n
+}
+
+function indexOfBytes(hay, needle) {
+  outer: for (let i = 0; i <= hay.length - needle.length; i++) {
+    for (let j = 0; j < needle.length; j++) if (hay[i + j] !== needle[j]) continue outer
+    return i
+  }
+  return -1
+}
+
+function crc32(bytes) {
+  let c = 0xffffffff
+  for (let i = 0; i < bytes.length; i++) {
+    c ^= bytes[i]
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+  }
+  return (c ^ 0xffffffff) >>> 0
+}

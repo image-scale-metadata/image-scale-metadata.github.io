@@ -65,6 +65,30 @@ WebP, HEIF, DNG and PDF, and are kept by the tools that keep XMP.
 - **Namespace URI:** `https://w3id.org/ism/0.1/` — registered at w3id.org; it resolves to this specification.
 - **Preferred prefix:** `ism`
 
+### 4.0 Where the packet lives
+
+ISM adds no container of its own. The fields go in the file's ordinary XMP packet, in the place
+each format keeps it:
+
+| Format | Where the XMP packet goes |
+|---|---|
+| **JPEG** | An `APP1` segment whose payload begins `http://ns.adobe.com/xap/1.0/\0`. A packet larger than one segment uses ExtendedXMP; ISM is small and MUST fit in the first. |
+| **TIFF and DNG** | Tag **700** (`XMP`) on the first IFD, type BYTE or UNDEFINED. |
+| **PNG** | An uncompressed `iTXt` chunk with the keyword `XML:com.adobe.xmp`, before `IDAT`. |
+| **WebP** | The `XMP ` chunk in the RIFF container. |
+| **HEIF, AVIF** | An `mime` item of type `application/rdf+xml`, as the format's metadata item. |
+| **PDF** | The document-level metadata stream (`/Metadata`). |
+
+A file MUST carry **one** XMP packet in force. A writer that adds ISM to a file that already has
+XMP MUST merge into that packet rather than add a second (§5). A reader MUST take the packet from
+where the format says it is, not from the first thing in the bytes that looks like one: a file can
+keep an old packet that nothing points at any more.
+
+**A sidecar** — For a format that cannot hold XMP, or a file that must not be rewritten, the
+packet MAY be written beside it as `<name>.xmp`, with the same base name. The sidecar holds the
+same fields with the same meaning, and a reader SHOULD look for it when the file itself has none.
+An original kept byte for byte is the ordinary reason to use one.
+
 ### 4.1 Core — required
 
 | Field | Type | Meaning |
@@ -238,12 +262,14 @@ a writer or reader conforms when it passes them.
 ## 10. What will be published with 1.0
 
 - This specification, versioned, under **CC BY 4.0**, with a DOI (Zenodo).
-- A **reference library** that reads and writes ISM — JavaScript, Python and Swift —
-  under **MIT or Apache 2.0**.
-- **Test files**: JPEG, TIFF and PNG at level A, B and C; resized, cropped and rotated
-  copies with the answer a reader must give for each.
+- A **reference library** that reads and writes ISM — JavaScript today, Python and Swift to
+  come — under **MIT**. *(JavaScript: done in 0.1; it reads and writes JPEG, PNG and TIFF.)*
+- **Test files** with the answer a reader must give for each. *(Done in 0.1:
+  [the set](testfiles/) covers JPEG, PNG and TIFF, resized, turned and cropped.)*
 - A **validator**: a web page where a file can be dropped and checked.
+  *(Done in 0.1: [the validator](validator/).)*
 - A **viewer demo**: a plain web page, not PHOTARCH, that opens a file and draws its scale.
+  *(Done in 0.1: [the viewer](viewer/), which also writes the scale into a file that has none.)*
 - The namespace at a neutral address that does not depend on any company: done in 0.1,
   `https://w3id.org/ism/`.
 

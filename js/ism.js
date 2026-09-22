@@ -18,6 +18,8 @@ export const METHODS = ['ruler', 'calipers', 'target', 'optics', 'other']
 /** §6.3: a copy with the same aspect ratio, within this, is taken to be resized. */
 export const ASPECT_TOLERANCE = 0.005
 
+const PNG_XMP_KEYWORD = 'XML:com.adobe.xmp'
+
 // ── Finding the XMP packet ────────────────────────────────────────────────────
 
 /**
@@ -27,12 +29,82 @@ export const ASPECT_TOLERANCE = 0.005
  */
 export function findXmp(bytes) {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  // Where the format says the packet lives, first. A file can carry bytes that
+  // look like a packet but are not the one in force — a TIFF whose XMP tag was
+  // repointed, say — and a reader that scans blindly would believe the wrong one.
+  const placed = (u8[0] === 0xff && u8[1] === 0xd8) ? xmpFromJpeg(u8)
+    : (u8[0] === 137 && u8[1] === 80) ? xmpFromPng(u8)
+    : ((u8[0] === 0x49 && u8[1] === 0x49) || (u8[0] === 0x4d && u8[1] === 0x4d)) ? xmpFromTiff(u8)
+    : undefined
+  if (placed !== undefined) return placed
+  return scanForXmp(u8)
+}
+
+/** The packet anywhere in the bytes — the fallback for WebP, HEIF and the rest. */
+function scanForXmp(u8) {
   const start = indexOf(u8, ascii('<x:xmpmeta'))
   if (start < 0) return null
   const endTag = ascii('</x:xmpmeta>')
   const end = indexOf(u8, endTag, start)
   if (end < 0) return null
   return new TextDecoder('utf-8').decode(u8.subarray(start, end + endTag.length))
+}
+
+function xmpFromJpeg(u8) {
+  const header = ascii('http://ns.adobe.com/xap/1.0/\0')
+  let i = 2
+  while (i + 4 <= u8.length && u8[i] === 0xff) {
+    const marker = u8[i + 1]
+    if (marker === 0xda) break
+    const len = (u8[i + 2] << 8) | u8[i + 3]
+    if (marker === 0xe1 && startsWith(u8.subarray(i + 4, i + 4 + header.length), header)) {
+      return new TextDecoder('utf-8').decode(u8.subarray(i + 4 + header.length, i + 2 + len))
+    }
+    i += 2 + len
+  }
+  return null
+}
+
+function xmpFromPng(u8) {
+  const keyword = ascii(PNG_XMP_KEYWORD)
+  let i = 8
+  while (i + 8 <= u8.length) {
+    const length = readU32(u8, i)
+    const type = new TextDecoder('latin1').decode(u8.subarray(i + 4, i + 8))
+    if (type === 'iTXt' && startsWith(u8.subarray(i + 8, i + 8 + keyword.length), keyword)) {
+      const at = i + 8 + keyword.length
+      // keyword\0 flag method language\0 translated\0, all empty as XMP asks
+      if (u8[at] === 0 && u8[at + 1] === 0) {
+        let p = at + 3
+        for (let skipped = 0; skipped < 2 && p < u8.length; p++) if (u8[p] === 0) skipped++
+        return new TextDecoder('utf-8').decode(u8.subarray(p, i + 8 + length))
+      }
+    }
+    if (type === 'IEND') break
+    i += 12 + length
+  }
+  return null
+}
+
+function xmpFromTiff(u8) {
+  const little = u8[0] === 0x49
+  const u16 = (o) => little ? u8[o] | (u8[o + 1] << 8) : (u8[o] << 8) | u8[o + 1]
+  const u32 = (o) => (little
+    ? u8[o] | (u8[o + 1] << 8) | (u8[o + 2] << 16) | (u8[o + 3] << 24)
+    : (u8[o] << 24) | (u8[o + 1] << 16) | (u8[o + 2] << 8) | u8[o + 3]) >>> 0
+  if (u16(2) !== 42) return null
+  const ifd = u32(4)
+  if (ifd + 2 > u8.length) return null
+  const count = u16(ifd)
+  for (let i = 0; i < count; i++) {
+    const at = ifd + 2 + i * 12
+    if (u16(at) !== 700) continue
+    const length = u32(at + 4)
+    const offset = length <= 4 ? at + 8 : u32(at + 8)
+    if (offset + length > u8.length) return null
+    return new TextDecoder('utf-8').decode(u8.subarray(offset, offset + length))
+  }
+  return null
 }
 
 function ascii(s) {
@@ -277,6 +349,155 @@ export function embedXmpInJpeg(jpeg, xmp) {
     i += 2 + len
   }
   parts.push(u8.subarray(i))
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
+  let o = 0
+  for (const p of parts) { out.set(p, o); o += p.length }
+  return out
+}
+
+// ── Writing the packet into PNG and TIFF ──────────────────────────────────────
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256)
+  for (let n = 0; n < 256; n++) {
+    let c = n
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+    t[n] = c >>> 0
+  }
+  return t
+})()
+
+function crc32(bytes) {
+  let c = 0xffffffff
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8)
+  return (c ^ 0xffffffff) >>> 0
+}
+
+
+/**
+ * The XMP packet written into a PNG, as the uncompressed iTXt chunk XMP asks
+ * for (keyword `XML:com.adobe.xmp`). An older XMP chunk is replaced. The chunk
+ * goes before IEND, and before IDAT, so a reader meets the metadata first.
+ */
+export function embedXmpInPng(png, xmp) {
+  const u8 = png instanceof Uint8Array ? png : new Uint8Array(png)
+  const signature = [137, 80, 78, 71, 13, 10, 26, 10]
+  for (let i = 0; i < 8; i++) if (u8[i] !== signature[i]) throw new Error('Not a PNG')
+
+  const keyword = ascii(PNG_XMP_KEYWORD)
+  const text = new TextEncoder().encode(xmp)
+  // iTXt: keyword \0 compression-flag compression-method language \0 translated \0 text
+  const data = new Uint8Array(keyword.length + 5 + text.length)
+  data.set(keyword, 0)
+  // keyword\0, flag 0 (not compressed), method 0, empty language\0, empty translated\0
+  data.set([0, 0, 0, 0, 0], keyword.length)
+  data.set(text, keyword.length + 5)
+  const chunk = pngChunk('iTXt', data)
+
+  const parts = [u8.subarray(0, 8)]
+  let i = 8
+  let written = false
+  while (i + 8 <= u8.length) {
+    const length = readU32(u8, i)
+    const type = new TextDecoder('latin1').decode(u8.subarray(i + 4, i + 8))
+    const whole = u8.subarray(i, i + 12 + length)
+    const isXmp = type === 'iTXt' && startsWith(u8.subarray(i + 8, i + 8 + keyword.length), keyword)
+    if (!written && (type === 'IDAT' || type === 'IEND')) { parts.push(chunk); written = true }
+    if (!isXmp) parts.push(whole)
+    i += 12 + length
+    if (type === 'IEND') break
+  }
+  if (!written) throw new Error('PNG has no IEND')
+  return concat(parts)
+}
+
+function pngChunk(type, data) {
+  const out = new Uint8Array(12 + data.length)
+  writeU32(out, 0, data.length)
+  out.set(ascii(type), 4)
+  out.set(data, 8)
+  writeU32(out, 8 + data.length, crc32(out.subarray(4, 8 + data.length)))
+  return out
+}
+
+/**
+ * The XMP packet written into a TIFF, as tag 700 on the first directory, the
+ * place TIFF keeps XMP. The packet and a rebuilt directory are appended, and
+ * the header is pointed at the new directory; the original values are left
+ * where they are, so nothing else in the file moves. An older tag 700 is
+ * replaced.
+ */
+export function embedXmpInTiff(tiff, xmp) {
+  const u8 = tiff instanceof Uint8Array ? tiff : new Uint8Array(tiff)
+  const little = u8[0] === 0x49 && u8[1] === 0x49
+  const big = u8[0] === 0x4d && u8[1] === 0x4d
+  if (!little && !big) throw new Error('Not a TIFF')
+  const u16 = (o) => little ? u8[o] | (u8[o + 1] << 8) : (u8[o] << 8) | u8[o + 1]
+  const u32 = (o) => (little
+    ? u8[o] | (u8[o + 1] << 8) | (u8[o + 2] << 16) | (u8[o + 3] << 24)
+    : (u8[o] << 24) | (u8[o + 1] << 16) | (u8[o + 2] << 8) | u8[o + 3]) >>> 0
+  if (u16(2) !== 42) throw new Error('Not a TIFF (bad magic)')
+
+  const ifd = u32(4)
+  const count = u16(ifd)
+  const entries = []
+  for (let i = 0; i < count; i++) {
+    const at = ifd + 2 + i * 12
+    const tag = u16(at)
+    if (tag !== 700) entries.push(u8.subarray(at, at + 12))
+  }
+  const nextIfd = u32(ifd + 2 + count * 12)
+
+  const packet = new TextEncoder().encode(xmp)
+  const pad = packet.length % 2 // keep the directory on an even offset
+  const xmpAt = u8.length
+  const ifdAt = xmpAt + packet.length + pad
+
+  const entry = new Uint8Array(12)
+  const put16 = (arr, o, v) => { if (little) { arr[o] = v & 0xff; arr[o + 1] = v >> 8 } else { arr[o] = v >> 8; arr[o + 1] = v & 0xff } }
+  const put32 = (arr, o, v) => {
+    if (little) { arr[o] = v & 0xff; arr[o + 1] = (v >>> 8) & 0xff; arr[o + 2] = (v >>> 16) & 0xff; arr[o + 3] = (v >>> 24) & 0xff }
+    else { arr[o] = (v >>> 24) & 0xff; arr[o + 1] = (v >>> 16) & 0xff; arr[o + 2] = (v >>> 8) & 0xff; arr[o + 3] = v & 0xff }
+  }
+  put16(entry, 0, 700)      // XMP
+  put16(entry, 2, 1)        // BYTE
+  put32(entry, 4, packet.length)
+  put32(entry, 8, xmpAt)
+
+  const all = [...entries, entry].sort((a, b) => tagOf(a, little) - tagOf(b, little))
+  const directory = new Uint8Array(2 + all.length * 12 + 4)
+  put16(directory, 0, all.length)
+  all.forEach((e, i) => directory.set(e, 2 + i * 12))
+  put32(directory, 2 + all.length * 12, nextIfd)
+
+  const out = new Uint8Array(ifdAt + directory.length)
+  out.set(u8, 0)
+  out.set(packet, xmpAt)
+  out.set(directory, ifdAt)
+  put32(out, 4, ifdAt) // the header now points at the rebuilt directory
+  return out
+
+  function tagOf(e, le) { return le ? e[0] | (e[1] << 8) : (e[0] << 8) | e[1] }
+}
+
+/** The packet written into whichever of JPEG, PNG or TIFF the bytes are. */
+export function embedXmp(bytes, xmp) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  if (u8[0] === 0xff && u8[1] === 0xd8) return embedXmpInJpeg(u8, xmp)
+  if (u8[0] === 137 && u8[1] === 80) return embedXmpInPng(u8, xmp)
+  if ((u8[0] === 0x49 && u8[1] === 0x49) || (u8[0] === 0x4d && u8[1] === 0x4d)) return embedXmpInTiff(u8, xmp)
+  throw new Error('Unsupported format: ISM is written into JPEG, PNG or TIFF here')
+}
+
+function startsWith(hay, needle) {
+  if (hay.length < needle.length) return false
+  for (let i = 0; i < needle.length; i++) if (hay[i] !== needle[i]) return false
+  return true
+}
+
+function readU32(u8, o) { return ((u8[o] << 24) | (u8[o + 1] << 16) | (u8[o + 2] << 8) | u8[o + 3]) >>> 0 }
+function writeU32(u8, o, v) { u8[o] = (v >>> 24) & 0xff; u8[o + 1] = (v >>> 16) & 0xff; u8[o + 2] = (v >>> 8) & 0xff; u8[o + 3] = v & 0xff }
+function concat(parts) {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
   let o = 0
   for (const p of parts) { out.set(p, o); o += p.length }

@@ -3,7 +3,7 @@
 // length, and download the picture with the scale in its metadata.
 // Everything happens in the browser; no file leaves the machine.
 import {
-  METHODS, embedXmpInJpeg, findXmp, formatMm, jpegHasXmpSegment, jpegOrientation, mergeIsmIntoXmp,
+  METHODS, embedXmp, findXmp, formatMm, jpegHasXmpSegment, jpegOrientation, mergeIsmIntoXmp,
   niceLength, readIsm, scaleFor,
 } from '../js/ism.js'
 
@@ -188,12 +188,24 @@ function uncertainty() {
   return Math.round((Math.SQRT2 * reference.screenPx / reference.px) * 10000) / 10000
 }
 
+/** The formats this viewer writes into: JPEG, PNG and TIFF (§4.0). */
+function writableKind(bytes) {
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) return { ext: 'jpg', type: 'image/jpeg' }
+  if (bytes[0] === 137 && bytes[1] === 80) return { ext: 'png', type: 'image/png' }
+  if ((bytes[0] === 0x49 && bytes[1] === 0x49) || (bytes[0] === 0x4d && bytes[1] === 0x4d)) return { ext: 'tif', type: 'image/tiff' }
+  return null
+}
+
 function write(lengthMm, method, measuredBy) {
   const { bytes, img, file } = current
   try {
     if (!(lengthMm > 0)) throw new Error('Give the length of the line in millimetres.')
+    const kind = writableKind(bytes)
+    if (!kind) {
+      throw new Error('The scale can be written into a JPEG, a PNG or a TIFF here. Other formats are read only.')
+    }
     const existing = findXmp(bytes)
-    if (!existing && jpegHasXmpSegment(bytes)) {
+    if (!existing && kind.ext === 'jpg' && jpegHasXmpSegment(bytes)) {
       throw new Error('The file has metadata this viewer cannot read safely, so nothing was written.')
     }
     // The reference grid is the stored one (§3): a JPEG shown turned by its
@@ -211,9 +223,9 @@ function write(lengthMm, method, measuredBy) {
       measuredAt: new Date().toISOString().slice(0, 10),
       software: SOFTWARE,
     }
-    const out = embedXmpInJpeg(bytes, mergeIsmIntoXmp(existing, fields))
-    const name = file.name.replace(/(\.[^.]+)?$/, '-ism.jpg')
-    const blob = new Blob([out], { type: 'image/jpeg' })
+    const out = embedXmp(bytes, mergeIsmIntoXmp(existing, fields))
+    const name = file.name.replace(/(\.[^.]+)?$/, `-ism.${kind.ext}`)
+    const blob = new Blob([out], { type: kind.type })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = name
@@ -222,7 +234,7 @@ function write(lengthMm, method, measuredBy) {
     a.remove()
     setTimeout(() => URL.revokeObjectURL(a.href), 1000)
     // Show the file as written, read back from its own bytes.
-    open(new File([out], name, { type: 'image/jpeg' }))
+    open(new File([out], name, { type: kind.type }))
   } catch (err) {
     statusEl.className = 'status bad'
     statusEl.textContent = err.message
