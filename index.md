@@ -210,9 +210,24 @@ picture**.
 
 ### 7.4 Prior art worth naming
 
-- **DICOM** `PixelSpacing` (0028,0030): the medical model, where every viewer shows a
-  true scale because the file says how large a pixel is. ISM is that idea for heritage
-  images.
+- **DICOM**: the medical model, where every viewer shows a true scale because the file
+  says how large a pixel is. ISM is that idea for heritage images, and the parallel runs
+  deeper than the one field usually cited:
+  - `ImagerPixelSpacing` (0018,1164) is the distance between pixel centres **on the
+    detector**; `PixelSpacing` (0028,0030) is the distance **in the patient**. The
+    standard states that the first "shall never be adjusted to account for calibration
+    against an object of known size" — that is what the second exists for. This is §5.2
+    of this specification, arrived at independently: a scale describes one pixel grid,
+    and writing it onto another grid gives a confident wrong answer.
+  - `EstimatedRadiographicMagnificationFactor` (0018,1114) relates the two planes, the
+    way §6.3 relates a resized copy to the grid the scale was measured on.
+  - `PixelSpacingCalibrationType` (0028,0A02) and `CalibrationDescription` record *how*
+    the calibration was obtained — a controlled value beside free text, which is what
+    `method` and `methodNote` are here.
+
+  Projection radiography had to make these distinctions explicit because getting them
+  wrong is clinically consequential (NEMA CP-586). Nothing about them is medical: they
+  follow from measuring anything at all from an image.
 - **Metamorfoze, FADGI, ISO 19264-1**: image quality, not scale. They say how well a
   picture is taken; ISM says how large what it shows is. The two are complementary.
 
