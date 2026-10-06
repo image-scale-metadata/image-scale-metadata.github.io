@@ -7,6 +7,8 @@ title: Image Scale Metadata (ISM) 0.1
 
 **Status:** draft for comment, 21 September 2026. **Comments welcome** — open an
 [issue](https://github.com/image-scale-metadata/image-scale-metadata.github.io/issues).
+Clarified 6 October 2026: what `ism:uncertainty` holds, and how a reader shows it as a
+margin (§4.2, §6.7). The field's meaning is unchanged.
 "Image Scale Metadata" is a working name.
 
 **Editor:** Daniel Lindskog (PHOTARCH).
@@ -106,7 +108,7 @@ These four are enough for a reader to draw a correct scale bar.
 |---|---|---|
 | `ism:method` | Closed choice | `ruler` (a ruler or scale in the picture), `calipers` (a length measured on the object and entered), `target` (a calibration target of known geometry in the picture), `optics` (known distance and focal length), `other`. |
 | `ism:methodNote` | Text | Free description, e.g. "calipers, length of the blade, 42.80 mm". |
-| `ism:uncertainty` | Real | Relative standard uncertainty of `ism:scale`, as a fraction: `0.005` is ±0.5 %. |
+| `ism:uncertainty` | Real | Relative standard uncertainty of `ism:scale`, as a fraction: one standard deviation, the way the GUM (JCGM 100:2008) states the uncertainty of a result. `0.005` is a standard uncertainty of 0.5 %; the margin that holds about 95 times in 100 is twice that, ± 1.0 % (§6.7). A writer that has a margin at 95 % writes half of it. |
 | `ism:measuredBy` | Text | Person or organisation that measured. |
 | `ism:measuredAt` | Date | ISO 8601 date the scale was set. |
 | `ism:software` | Text | Software and version that wrote the scale, e.g. "PHOTARCH Desktop 1.0". |
@@ -167,6 +169,10 @@ measurement they display.
    change it; `ism:objectBox` is given on the stored grid and MUST be rotated with the
    image when drawn.
 6. A reader SHOULD show the method and uncertainty when it shows a measurement.
+7. `ism:uncertainty` is a standard uncertainty, not a margin. A reader that shows it as a
+   margin (±) SHOULD show twice it — the expanded uncertainty with coverage factor k = 2,
+   about 95 % (GUM §6) — and say so: "± 1.0 % (95 %)". The stored figure shown as ± would
+   claim the scale twice as certain as it is.
 
 ## 7. Mappings to what already exists
 

@@ -88,7 +88,10 @@ function show() {
     section('How it was measured', [
       ['Method', fields.method && (METHODS.includes(fields.method) ? fields.method : `${fields.method} (unknown)`)],
       ['Note', fields.methodNote],
-      ['Uncertainty', fields.uncertainty !== undefined ? `± ${pct(fields.uncertainty)} of the scale` : undefined],
+      // The field is a standard uncertainty; the margin shown is twice it, about 95 % (§6.7).
+      ['Uncertainty', fields.uncertainty !== undefined
+        ? `± ${pct(2 * fields.uncertainty)} of the scale, at about 95% (standard uncertainty ${pct(fields.uncertainty)})`
+        : undefined],
       ['By', fields.measuredBy],
       ['When', fields.measuredAt],
       ['Software', fields.software],
@@ -164,7 +167,7 @@ function showWriter() {
     const v = Number(length.value)
     if (!(v > 0)) { out.textContent = ''; return }
     const s = v / reference.px
-    out.textContent = `= ${formatMm(s)} per pixel, ± ${pct(uncertainty())} from where the line was drawn.`
+    out.textContent = `= ${formatMm(s)} per pixel, ± ${pct(2 * uncertainty())} at about 95%, from where the line was drawn.`
   }
   length.addEventListener('input', update)
   const actions = document.createElement('div')
@@ -180,9 +183,9 @@ function showWriter() {
 }
 
 /**
- * Relative uncertainty of the scale from drawing the line: each end is placed
- * to about one screen pixel, which on a picture shown smaller than its size is
- * several picture pixels.
+ * Relative standard uncertainty of the scale from drawing the line: each end is
+ * placed to about one screen pixel, which on a picture shown smaller than its
+ * size is several picture pixels. Written as it is (ism:uncertainty), shown doubled.
  */
 function uncertainty() {
   return Math.round((Math.SQRT2 * reference.screenPx / reference.px) * 10000) / 10000
