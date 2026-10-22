@@ -1,0 +1,19 @@
+---
+layout: default
+---
+{% assign address = "https://w3id.org/ism/0.1/method/" | append: page.method %}
+<div class="hero">
+<p class="hero__eyebrow">Image Scale Metadata · version 0.1 · a value of <code>ism:method</code></p>
+<h1>{{ page.name }}</h1>
+<p class="hero__lede">{{ page.meaning }}</p>
+<dl class="facts">
+<dt>Value</dt>
+<dd><code>ism:method="{{ page.method }}"</code></dd>
+<dt>Address</dt>
+<dd><code>{{ address }}</code></dd>
+<dt>In Linked Art</dt>
+<dd>This address can be used as the <code>technique</code> of the <code>AttributeAssignment</code> that says how an object's dimensions were obtained (<a href="{{ '/#73-linked-art-and-museum-records' | relative_url }}">§7.3</a>).</dd>
+<dt>Defined in</dt>
+<dd><a href="{{ '/#42-how-the-scale-was-obtained--recommended' | relative_url }}">Image Scale Metadata 0.1, §4.2</a></dd>
+</dl>
+</div>

@@ -263,6 +263,9 @@ entries (Width, `aat:300055647`; Height, `aat:300055644`) with the unit millimet
 `assigned_by`: `technique` for the method (a local term such as "measured from a scaled
 photograph", since no shared one exists yet), `carried_out_by` and `timespan` for
 `ism:measuredBy` and `ism:measuredAt`, and `used_specific_object` for the photograph itself.
+Each value of `ism:method` has its own address under `https://w3id.org/ism/0.1/method/`
+(for example [`https://w3id.org/ism/0.1/method/calipers`](https://w3id.org/ism/0.1/method/calipers)),
+which can serve as that `technique`.
 ISM's width runs along the image's x axis; a museum's width follows the object's own
 orientation, and the two need not agree.
 
