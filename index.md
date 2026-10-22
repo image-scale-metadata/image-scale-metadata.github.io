@@ -257,10 +257,17 @@ what make the number trustworthy.
 
 ### 7.3 Linked Art and museum records
 
-`ism:objectWidthMm` and `ism:objectHeightMm` map to Linked Art `dimension` entries with a
-unit of millimetres and a method that names "measured from a scaled photograph". ISM does
-not replace a museum's own recorded dimensions; it says how large the object is **in this
-picture**.
+`ism:objectWidthMm` and `ism:objectHeightMm` can be expressed as Linked Art `dimension`
+entries (Width, `aat:300055647`; Height, `aat:300055644`) with the unit millimetres
+(`aat:300379097`). How they were obtained belongs on an `AttributeAssignment` linked with
+`assigned_by`: `technique` for the method (a local term such as "measured from a scaled
+photograph", since no shared one exists yet), `carried_out_by` and `timespan` for
+`ism:measuredBy` and `ism:measuredAt`, and `used_specific_object` for the photograph itself.
+ISM's width runs along the image's x axis; a museum's width follows the object's own
+orientation, and the two need not agree.
+
+ISM does not replace a museum's own recorded dimensions; it says how large the object is
+**in this picture**.
 
 ### 7.4 Prior art worth naming
 
