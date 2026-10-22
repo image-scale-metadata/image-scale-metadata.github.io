@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Image Scale Metadata — viewer</title>
 <meta name="description" content="Open an image and see its true scale, read from the Image Scale Metadata in the file itself.">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../assets/ism.css">
 <style>
   /* The viewer's own furniture. Colours, type and rules come from the site's
@@ -45,10 +46,12 @@
 <body>
 <header class="masthead">
   <div class="masthead__inner">
-    <p class="masthead__name"><a href="../">Image Scale Metadata</a></p>
+    <a class="masthead__mark" href="../" aria-label="Image Scale Metadata">
+      <svg viewBox="40 62 2046 400" aria-hidden="true"><use href="../assets/ism-button.svg#ism"/></svg>
+    </a>
     <nav class="masthead__nav">
       <a href="../">Specification</a>
-      <a href="./">Viewer</a>
+      <a href="./" aria-current="page">Viewer</a>
       <a href="../validator/">Validator</a>
       <a href="../testfiles/">Test files</a>
       <a href="https://github.com/image-scale-metadata/image-scale-metadata.github.io">Repository</a>

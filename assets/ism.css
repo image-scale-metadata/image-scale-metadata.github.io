@@ -1,10 +1,12 @@
 /* Image Scale Metadata — the site's one stylesheet.
  *
- * The look is deliberately plain: a standard should not look like a product.
- * No logo, no brand colour, nothing that says one implementer owns the format.
- * What it does carry is craft — a measured line length, quiet greys, hairline
- * rules, and the same face in light and dark. The viewer uses the same tokens,
- * so the two pages read as one.
+ * The look is plain on purpose: a specification should not look like a product.
+ * There is no brand colour and nothing that says one implementer owns the format.
+ * The one mark is the ISM sign itself, drawn in the ink colour: two crosses and
+ * the measured distance between them. The same motif returns in the figures.
+ * Beyond that it carries craft: a measured line length, quiet greys, hairline
+ * rules, and the same face in light and dark. The viewer and validator use the
+ * same tokens, so every page reads as one.
  */
 
 :root {
@@ -77,6 +79,16 @@ body {
   padding-bottom: 1.25rem;
 }
 
+.masthead__mark {
+  display: block;
+  align-self: center;
+  color: var(--ink);
+  line-height: 0;
+}
+
+.masthead__mark svg { display: block; width: 8.5rem; height: auto; }
+
+/* Kept for pages that still name the site in text. */
 .masthead__name {
   margin: 0;
   font-size: 0.6875rem;
@@ -103,6 +115,7 @@ body {
 }
 
 .masthead__nav a:hover { color: var(--ink); border-bottom-color: var(--line); }
+.masthead__nav a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--rule); }
 
 /* ── The page ─────────────────────────────────────────────────────────────── */
 
@@ -201,6 +214,267 @@ code, kbd, samp, pre { font-family: var(--mono); }
 }
 
 .page hr { border: 0; border-top: 1px solid var(--line); margin: 3rem 0; }
+
+/* ── The shell: contents beside the page on wide screens ──────────────────── */
+
+.shell--toc .toc { display: none; }
+
+@media (min-width: 72rem) {
+  .shell--toc {
+    display: grid;
+    grid-template-columns: 11rem minmax(0, 52rem);
+    gap: 0 3.5rem;
+    margin: 0 auto;
+    max-width: 69.5rem;
+    padding: 0 1.5rem;
+  }
+  /* The masthead and colophon line up with the contents column. */
+  .has-toc .masthead__inner, .has-toc .colophon__inner { max-width: 69.5rem; }
+  .shell--toc .page { margin: 0; max-width: none; padding-left: 0; padding-right: 0; }
+  .shell--toc .toc {
+    display: block;
+    position: sticky;
+    top: 0;
+    align-self: start;
+    max-height: 100vh;
+    overflow-y: auto;
+    padding: 3.75rem 0 2rem;
+  }
+}
+
+.toc__title {
+  margin: 0 0 0.9rem;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.toc ol { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--line); }
+.toc li { margin: 0; }
+
+.toc a {
+  display: flex;
+  gap: 0.6rem;
+  margin-left: -1px;
+  padding: 0.3rem 0 0.3rem 0.85rem;
+  border-left: 1px solid transparent;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  text-decoration: none;
+}
+
+.toc a:hover { color: var(--ink); }
+.toc a[aria-current="true"] { color: var(--ink); border-left-color: var(--rule); }
+.toc .secno { min-width: 1.1rem; margin: 0; }
+
+/* ── The opening ──────────────────────────────────────────────────────────── */
+
+.page > .hero { max-width: 100%; margin-bottom: 3rem; }
+
+.hero__eyebrow {
+  margin: 0 0 1.1rem;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.page .hero h1 {
+  max-width: none;
+  margin: 0 0 1.25rem;
+  font-size: clamp(2.25rem, 1.4rem + 3.4vw, 3.75rem);
+  font-weight: 250;
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+}
+
+.page .hero__lede {
+  max-width: 36rem;
+  margin: 0 0 2.25rem;
+  font-size: clamp(1.0625rem, 1rem + 0.35vw, 1.25rem);
+  line-height: 1.55;
+  font-weight: 300;
+}
+
+/* The measured line: two crosses and the distance between them. */
+
+.measure {
+  margin: 0 0 2.5rem;
+  max-width: 36rem;
+  color: var(--ink);
+}
+
+.measure__value {
+  display: block;
+  text-align: center;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.measure__line {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.45rem 0;
+}
+
+.measure__line svg { flex: none; width: 0.95rem; height: 0.95rem; }
+
+.measure__dash {
+  flex: 1;
+  height: 3px;
+  background: repeating-linear-gradient(90deg, currentColor 0 0.85rem, transparent 0.85rem 1.35rem);
+}
+
+.measure__calc {
+  display: block;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0 0 2.75rem;
+}
+
+.page a.button {
+  display: inline-block;
+  padding: 0.6rem 1.05rem;
+  border: 1px solid var(--rule);
+  background: var(--rule);
+  color: var(--bg);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  text-decoration: none;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.page a.button:hover { background: transparent; color: var(--ink); }
+.page a.button--quiet { background: transparent; color: var(--ink); border-color: var(--line); }
+.page a.button--quiet:hover { border-color: var(--rule); }
+
+/* The facts about the document, as a register rather than a paragraph. */
+
+.facts {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  margin: 0;
+  border-top: 1px solid var(--rule);
+  font-size: 0.875rem;
+}
+
+.facts dt, .facts dd {
+  margin: 0;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.facts dt {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding-top: 0.8rem;
+}
+
+@media (max-width: 34rem) {
+  .facts { grid-template-columns: 1fr; }
+  .facts dt { border-bottom: 0; padding-bottom: 0; }
+  .facts dd { padding-top: 0.15rem; }
+}
+
+/* ── Headings, keywords and anchors (set by ism.js) ───────────────────────── */
+
+.secno {
+  margin-right: 0.65rem;
+  font-family: var(--mono);
+  font-size: 0.8em;
+  font-weight: 400;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.page h2, .page h3 { position: relative; scroll-margin-top: 1.5rem; }
+
+.page h2 { font-size: 1.1875rem; }
+
+.anchor {
+  margin-left: 0.5rem;
+  color: var(--faint) !important;
+  text-decoration: none !important;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.page h2:hover .anchor, .page h3:hover .anchor, .anchor:focus { opacity: 1; }
+
+.kw {
+  font-size: 0.8em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+/* Field names in the first column stay on one line. */
+.page td:first-child code { white-space: nowrap; }
+
+@media (max-width: 40rem) {
+  .page table { display: block; overflow-x: auto; }
+}
+
+/* ── Figures ──────────────────────────────────────────────────────────────── */
+
+.page > .figure { max-width: 100%; margin: 2.25rem 0 2.5rem; }
+
+.figure__panels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem 2rem;
+  padding: 1.75rem 1.5rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.figure__panels svg { flex: 1 1 15rem; max-width: 22rem; height: auto; overflow: visible; }
+
+.figure svg { color: var(--ink); font-family: var(--sans); }
+.figure .f-label { fill: var(--muted); font-size: 12px; }
+.figure .f-head { fill: var(--ink); font-size: 13px; font-weight: 500; }
+.figure .f-mono { fill: var(--muted); font-family: var(--mono); font-size: 11px; }
+.figure .f-line { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.figure .f-hair { fill: none; stroke: var(--line); stroke-width: 1; }
+.figure .f-dash { fill: none; stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 3; }
+.figure .f-object { fill: var(--line); stroke: currentColor; stroke-width: 1.5; }
+.figure .f-ink { fill: currentColor; }
+.figure .f-cross { stroke: currentColor; stroke-width: 2.5; stroke-linecap: square; }
+
+.figure .figcaption {
+  margin-top: 0.85rem;
+  max-width: var(--measure);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* ── Code: greys only ─────────────────────────────────────────────────────── */
+
+.highlight .nt { color: var(--ink); font-weight: 500; }
+.highlight .na { color: var(--muted); }
+.highlight .s, .highlight .s1, .highlight .s2, .highlight .mi, .highlight .mf { color: var(--ink); }
+.highlight .p, .highlight .err { color: var(--faint); }
+.highlight .c, .highlight .c1, .highlight .cm { color: var(--faint); font-style: italic; }
 
 /* ── The colophon ─────────────────────────────────────────────────────────── */
 

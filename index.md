@@ -1,18 +1,34 @@
 ---
 layout: default
 title: Image Scale Metadata (ISM) 0.1
+toc: true
 ---
 
-# Image Scale Metadata (ISM) — version 0.1, draft
-
-**Status:** draft for comment, 21 September 2026. **Comments welcome** — open an
-[issue](https://github.com/image-scale-metadata/image-scale-metadata.github.io/issues).
-Clarified 6 October 2026: what `ism:uncertainty` holds, and how a reader shows it as a
-margin (§4.2, §6.7). The field's meaning is unchanged.
-"Image Scale Metadata" is a working name.
-
-**Editor:** Daniel Lindskog (PHOTARCH).
-**Licence:** this specification, CC BY 4.0; the code in this repository, MIT.
+<div class="hero">
+<p class="hero__eyebrow">Specification · version 0.1 · draft for comment</p>
+<h1>Image Scale Metadata</h1>
+<p class="hero__lede">An open format for carrying the true scale of an image inside the image file, so that any program can draw a scale bar, measure a distance, or place two objects side by side at the same size.</p>
+<figure class="measure" aria-label="Example: 1000 pixels at 0.0428 millimetres per pixel is 42.80 millimetres">
+<span class="measure__value">42.80 mm</span>
+<span class="measure__line" aria-hidden="true"><svg viewBox="0 0 10 10"><path d="M1.5 1.5 8.5 8.5M8.5 1.5 1.5 8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="square"/></svg><span class="measure__dash"></span><svg viewBox="0 0 10 10"><path d="M1.5 1.5 8.5 8.5M8.5 1.5 1.5 8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="square"/></svg></span>
+<span class="measure__calc">1000 px × 0.0428 mm/px</span>
+</figure>
+<p class="hero__actions"><a class="button" href="viewer/">Open the viewer</a><a class="button button--quiet" href="validator/">Check a file</a><a class="button button--quiet" href="testfiles/">Test files</a></p>
+<dl class="facts">
+<dt>Status</dt>
+<dd>Draft for comment, 21 September 2026. Clarified 6 October 2026: what <code>ism:uncertainty</code> holds, and how a reader shows it as a margin (§4.2, §6.7). The field's meaning is unchanged.</dd>
+<dt>Comments</dt>
+<dd>Welcome — open an <a href="https://github.com/image-scale-metadata/image-scale-metadata.github.io/issues">issue</a>.</dd>
+<dt>Editor</dt>
+<dd>Daniel Lindskog (PHOTARCH)</dd>
+<dt>Licence</dt>
+<dd>This specification, CC BY 4.0; the code in this repository, MIT.</dd>
+<dt>Namespace</dt>
+<dd><code>https://w3id.org/ism/0.1/</code></dd>
+<dt>Name</dt>
+<dd>"Image Scale Metadata" is a working name.</dd>
+</dl>
+</div>
 
 **Try it:** the [viewer](viewer/) opens an image and draws its scale from the file itself. It also writes the scale into an older picture that has a ruler in it: measure the ruler once, and the file carries its scale from then on.
 [Test files](https://github.com/image-scale-metadata/image-scale-metadata.github.io/tree/main/testfiles)
@@ -56,6 +72,38 @@ import into another system.
 | **Current grid** | The pixel width and height of the file being read. |
 | **Writer** | Software that puts ISM fields into a file. |
 | **Reader** | Software that reads them and shows or uses the scale. |
+
+<div class="figure">
+<div class="figure__panels">
+<svg viewBox="0 0 340 380" role="img" aria-labelledby="fig1a">
+<title id="fig1a">The image: a reference grid of 1509 by 1509 pixels, with the object's box 1000 pixels wide.</title>
+<text class="f-head" x="20" y="16">The image</text>
+<text class="f-label" x="20" y="34">reference grid, 1509 × 1509 px</text>
+<rect class="f-line" x="20" y="44" width="300" height="300"/>
+<path class="f-object" d="M70.5,200 C70.5,150 110,100.86 160,100.86 C215,100.86 269.3,135 269.3,180 C269.3,235 235,286.35 185,286.35 C125,286.35 70.5,250 70.5,200 Z"/>
+<rect class="f-dash" x="70.5" y="100.86" width="198.81" height="185.49"/>
+<path class="f-dash" d="M70.5,98 V76 M269.31,98 V76"/>
+<path class="f-line" d="M70.5,82 H269.31" stroke-dasharray="6 4"/>
+<path class="f-cross" d="M66.5,78 74.5,86 M74.5,78 66.5,86 M265.31,78 273.31,86 M273.31,78 265.31,86"/>
+<text class="f-label" x="169.9" y="70" text-anchor="middle">1000 px</text>
+<text class="f-mono" x="70.5" y="304">ism:objectBox</text>
+<text class="f-mono" x="170" y="368" text-anchor="middle">1000 px × 0.0428 mm/px = 42.80 mm</text>
+</svg>
+<svg viewBox="0 0 340 380" role="img" aria-labelledby="fig1b">
+<title id="fig1b">One pixel, enlarged: it covers 0.0428 millimetres of the object.</title>
+<text class="f-head" x="20" y="16">One pixel, enlarged</text>
+<text class="f-label" x="20" y="34">ism:scale — the length one pixel covers</text>
+<path class="f-hair" d="M40,56 H300 M40,108 H300 M40,160 H300 M40,212 H300 M40,264 H300 M40,316 H300 M40,56 V316 M92,56 V316 M144,56 V316 M196,56 V316 M248,56 V316 M300,56 V316"/>
+<rect class="f-object" x="144" y="160" width="52" height="52"/>
+<path class="f-dash" d="M144,214 V330 M196,214 V330"/>
+<path class="f-line" d="M144,336 H196" stroke-dasharray="6 4"/>
+<path class="f-cross" d="M140,332 148,340 M148,332 140,340 M192,332 200,340 M200,332 192,340"/>
+<text class="f-head" x="170" y="360" text-anchor="middle">0.0428 mm</text>
+<text class="f-mono" x="170" y="376" text-anchor="middle">on the object, in the measured plane</text>
+</svg>
+</div>
+<p class="figcaption">What the four core fields say, using the example in §8. The reference grid is 1509 × 1509 px, and one pixel covers 0.0428 mm of the object, so an object 1000 px wide on that grid is 42.80 mm wide.</p>
+</div>
 
 "MUST", "SHOULD" and "MAY" are used as in RFC 2119.
 
