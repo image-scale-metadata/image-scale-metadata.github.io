@@ -2,8 +2,9 @@
  *
  * The look is plain on purpose: a specification should not look like a product.
  * There is no brand colour and nothing that says one implementer owns the format.
- * The one mark is the ISM sign itself, drawn in the ink colour: two crosses and
- * the measured distance between them. The same motif returns in the figures.
+ * The one mark is the ISM sign itself, drawn in the ink colour. The measured
+ * line of the ISM button (two crosses and the distance between them) returns
+ * in the figures.
  * Beyond that it carries craft: a measured line length, quiet greys, hairline
  * rules, and the same face in light and dark. The viewer and validator use the
  * same tokens, so every page reads as one.
@@ -84,6 +85,8 @@ body {
   align-self: center;
   color: var(--ink);
   line-height: 0;
+  /* The lettering in the filled half is cut out to the page colour. */
+  --ism-knockout: var(--bg);
 }
 
 .masthead__mark svg { display: block; width: 8.5rem; height: auto; }
