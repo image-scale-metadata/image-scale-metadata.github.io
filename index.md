@@ -111,7 +111,7 @@ These four are enough for a reader to draw a correct scale bar.
 | `ism:uncertainty` | Real | Relative standard uncertainty of `ism:scale`, as a fraction: one standard deviation, the way the GUM (JCGM 100:2008) states the uncertainty of a result. `0.005` is a standard uncertainty of 0.5 %; the margin that holds about 95 times in 100 is twice that, ± 1.0 % (§6.7). A writer that has a margin at 95 % writes half of it. |
 | `ism:measuredBy` | Text | Person or organisation that measured. |
 | `ism:measuredAt` | Date | ISO 8601 date the scale was set. |
-| `ism:software` | Text | Software and version that wrote the scale, e.g. "PHOTARCH Desktop 1.0". |
+| `ism:software` | Text | Software and version that wrote the scale, e.g. "PHOTARCH 1.0", as the PHOTARCH app writes it. |
 
 ### 4.3 The object — optional
 
@@ -254,7 +254,7 @@ A JPEG exported at 1509 × 1509 px, measured with calipers:
         ism:methodNote="Length of the blade, 42.80 mm, measured with calipers"
         ism:uncertainty="0.004"
         ism:measuredAt="2026-09-21"
-        ism:software="PHOTARCH Desktop 1.0"
+        ism:software="PHOTARCH 1.0"
         ism:plane="Upper surface of the find"
         ism:objectWidthMm="42.80"
         ism:objectHeightMm="39.92">

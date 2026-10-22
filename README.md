@@ -67,7 +67,7 @@ Then open http://localhost:8765/viewer/ and drop an image on it.
 Made from `testfiles/desktop/ism-a123-calipers.jpg` with
 `node tools/make-testfiles.mjs testfiles/desktop/ism-a123-calipers.jpg 0.07490277 testfiles`.
 
-### From PHOTARCH Desktop
+### From the PHOTARCH app
 
 `testfiles/desktop/` holds four exports from the first implementation (copied from the
 PHOTARCH vault). All four read without problems; `objectBox` × `scale` matches the

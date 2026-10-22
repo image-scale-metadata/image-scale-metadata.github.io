@@ -18,7 +18,7 @@ FILES = Path(__file__).resolve().parent.parent / "testfiles"
 FULL = {
     "scale": 0.0428, "referenceWidth": 1509, "referenceHeight": 1509,
     "method": "calipers", "methodNote": "Length of the blade, 42.80 mm",
-    "uncertainty": 0.004, "measuredAt": "2026-09-21", "software": "PHOTARCH Desktop 1.0",
+    "uncertainty": 0.004, "measuredAt": "2026-09-21", "software": "PHOTARCH 1.0",
     "objectWidthMm": 42.8, "objectBox": [10, 20, 300, 400],
 }
 
