@@ -156,5 +156,71 @@ class AgainstTheOtherImplementation(unittest.TestCase):
                 self.assertAlmostEqual(scale * bar_px, 50.0, places=6)
 
 
+class Models(unittest.TestCase):
+    """§13: the model files in testfiles/ were written by the JavaScript writer."""
+
+    #: name → (scale, geometry, turned, rescaled, size in mm), or None for refused
+    ANSWERS = {
+        "20-model-measured.glb": (1000, "measured", False, False, (60, 20, 40)),
+        "21-model-decimated.glb": (1000, "changed", False, False, (60, 20, 40)),
+        "22-model-turned.glb": (1000, "measured", True, False, (60, 40, 20)),
+        "23-model-in-millimetres.glb": (1, "changed", False, True, (60, 20, 40)),
+        "24-model-cut.glb": None,
+    }
+
+    def test_the_published_answers(self):
+        for name, answer in self.ANSWERS.items():
+            with self.subTest(name):
+                reading = ism.read_model((FILES / name).read_bytes())["reading"]
+                if answer is None:
+                    self.assertFalse(reading["ok"])
+                    self.assertIn("cut or changed", reading["reason"])
+                    continue
+                scale, geometry, turned, rescaled, size = answer
+                self.assertTrue(reading["ok"])
+                self.assertAlmostEqual(reading["scale"], scale, delta=scale * 1e-6)
+                self.assertEqual((reading["geometry"], reading["turned"], reading["rescaled"]), (geometry, turned, rescaled))
+                for got, want in zip(reading["sizeMm"], size):
+                    self.assertAlmostEqual(got, want, places=4)
+        self.assertIsNone(ism.read_model((FILES / "25-model-no-ism.glb").read_bytes())["fields"])
+
+    def test_both_implementations_hash_the_same_vertices(self):
+        """The hash JavaScript wrote is the hash Python works out, for the same file."""
+        data = (FILES / "20-model-measured.glb").read_bytes()
+        model = ism.read_model(data)
+        self.assertEqual(model["fields"]["geometryHash"], model["geometry"]["hash"])
+        self.assertEqual(model["fields"]["referenceExtent"], model["geometry"]["extent"])
+
+    def test_written_by_python_read_back_and_other_metadata_kept(self):
+        data = (FILES / "20-model-measured.glb").read_bytes()
+        out = ism.write_model(data, {"scale": 1000, "method": "scanner", "uncertainty": 0.0005})
+        model = ism.read_model(out)
+        self.assertEqual(model["fields"]["method"], "scanner")
+        self.assertEqual(model["fields"]["version"], ism.ISM_VERSION)
+        self.assertNotIn("methodNote", model["fields"], "older ISM is replaced, not merged")
+        self.assertEqual(model["reading"]["geometry"], "measured")
+        packet = ism.asset_packet(ism.read_gltf(out)["json"])
+        self.assertEqual(packet["xmp:CreatorTool"], "ISM reference tools")
+
+    def test_model_fields_are_kept_apart_from_an_image(self):
+        f = {"version": "0.2", "scale": 1000, "referenceExtent": [0.05, 0.02, 0.01], "geometryHash": "a" * 64}
+        self.assertEqual(ism.validate(f), [])
+        self.assertFalse(ism.scale_for(f, 100, 100)[0])
+        self.assertIn("either an image or a model", " ".join(ism.validate({**f, "referenceWidth": 10, "referenceHeight": 10})))
+        self.assertIn("64 lower-case", " ".join(ism.validate({**f, "geometryHash": "ABC"})))
+
+    def test_a_sidecar_is_the_same_bytes_from_both_writers(self):
+        import subprocess
+        f = {"scale": 1, "referenceExtent": [60, 20.5, 0.00005], "geometryHash": "b" * 64, "method": "scanner"}
+        py = ism.write_xmp(f)
+        self.assertEqual(ism.parse(py), {"version": ism.ISM_VERSION, **f})
+        js = subprocess.run(
+            ["node", "--input-type=module", "-e",
+             "import { writeIsmXmp } from '%s'; process.stdout.write(writeIsmXmp(%s))"
+             % ((FILES.parent / "js" / "ism.js").as_uri(), __import__("json").dumps(f))],
+            capture_output=True, text=True, check=True).stdout
+        self.assertEqual(py, js)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,22 +1,29 @@
-// Image Scale Metadata (ISM) — reference reader and writer, version 0.1 (draft).
+// Image Scale Metadata (ISM) — reference reader and writer, version 0.2 (draft).
 //
 // Reads the scale an image carries in its own XMP and says whether it can be
 // trusted for the file at hand; writes the fields and embeds them in a JPEG.
+// Does the same for a three-dimensional model in glTF/GLB (§13).
 // No dependencies; works in browsers and in Node 18+.
 //
-// Spec: Image Scale Metadata 0.1, §4 (fields), §5 (writers), §6 (readers).
-// Licence: MIT.
+// Spec: Image Scale Metadata 0.2, §4 (fields), §5 (writers), §6 (readers),
+// §13 (models). Licence: MIT.
 
+/** The namespace keeps its address through 0.x: 0.2 only adds (§4). */
 export const ISM_NS = 'https://w3id.org/ism/0.1/'
-export const ISM_VERSION = '0.1'
+export const ISM_VERSION = '0.2'
 
 const CORE = ['version', 'scale', 'referenceWidth', 'referenceHeight']
+/** §13.1: a model's core. */
+const MODEL_CORE = ['version', 'scale', 'referenceExtent', 'geometryHash']
 const REALS = ['scale', 'uncertainty', 'objectWidthMm', 'objectHeightMm', 'objectThicknessMm']
 const INTEGERS = ['referenceWidth', 'referenceHeight']
-const TEXTS = ['version', 'method', 'methodNote', 'measuredBy', 'measuredAt', 'software', 'plane']
-export const METHODS = ['ruler', 'calipers', 'target', 'optics', 'other']
+const TEXTS = ['version', 'method', 'methodNote', 'measuredBy', 'measuredAt', 'software', 'plane', 'geometryHash']
+export const METHODS = ['ruler', 'calipers', 'target', 'optics', 'scanner', 'ct', 'other']
 /** §6.3: a copy with the same aspect ratio, within this, is taken to be resized. */
 export const ASPECT_TOLERANCE = 0.005
+
+/** The fields written as an rdf:Seq of numbers. */
+const SEQS = ['objectBox', 'referenceExtent']
 
 const PNG_XMP_KEYWORD = 'XML:com.adobe.xmp'
 
@@ -141,14 +148,13 @@ export function parseIsm(xmp) {
   for (const m of xmp.matchAll(new RegExp(`\\b${p}:(\\w+)\\s*=\\s*"([^"]*)"`, 'g'))) raw[m[1]] = unescapeXml(m[2])
   for (const m of xmp.matchAll(new RegExp(`\\b${p}:(\\w+)\\s*=\\s*'([^']*)'`, 'g'))) raw[m[1]] = unescapeXml(m[2])
   for (const m of xmp.matchAll(new RegExp(`<${p}:(\\w+)>([^<]*)</${p}:\\1>`, 'g'))) raw[m[1]] = unescapeXml(m[2].trim())
-  const box = new RegExp(`<${p}:objectBox>([\\s\\S]*?)</${p}:objectBox>`).exec(xmp)
   const fields = {}
   for (const k of TEXTS) if (raw[k] !== undefined) fields[k] = raw[k]
   for (const k of REALS) if (raw[k] !== undefined) fields[k] = Number(raw[k])
   for (const k of INTEGERS) if (raw[k] !== undefined) fields[k] = Number(raw[k])
-  if (box) {
-    const values = [...box[1].matchAll(/<rdf:li>\s*([^<]*?)\s*<\/rdf:li>/g)].map(m => Number(m[1]))
-    fields.objectBox = values
+  for (const k of SEQS) {
+    const seq = new RegExp(`<${p}:${k}>([\\s\\S]*?)</${p}:${k}>`).exec(xmp)
+    if (seq) fields[k] = [...seq[1].matchAll(/<rdf:li>\s*([^<]*?)\s*<\/rdf:li>/g)].map(m => Number(m[1]))
   }
   return Object.keys(fields).length ? fields : null
 }
@@ -160,11 +166,20 @@ export function readIsm(bytes) {
 
 // ── Checking the fields ───────────────────────────────────────────────────────
 
-/** Problems with the fields themselves, before any image is involved (§4, §6.1). */
+/** Whether the fields describe a model (§13) rather than an image. */
+export function isModelFields(fields) {
+  return !!fields && (fields.referenceExtent !== undefined || fields.geometryHash !== undefined)
+}
+
+/** Problems with the fields themselves, before any image or model is involved (§4, §6.1, §13.1). */
 export function validate(fields) {
   const problems = []
   if (!fields) return ['No Image Scale Metadata in the file.']
-  const missing = CORE.filter(k => fields[k] === undefined)
+  const model = isModelFields(fields)
+  if (model && (fields.referenceWidth !== undefined || fields.referenceHeight !== undefined)) {
+    problems.push('The fields carry both a pixel grid and a model extent; they describe either an image or a model.')
+  }
+  const missing = (model ? MODEL_CORE : CORE).filter(k => fields[k] === undefined)
   if (missing.length) problems.push(`Missing required field${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}.`)
   if (fields.scale !== undefined && !(Number.isFinite(fields.scale) && fields.scale > 0)) problems.push('scale must be a number above 0.')
   for (const k of INTEGERS) {
@@ -173,6 +188,8 @@ export function validate(fields) {
   if (fields.method !== undefined && !METHODS.includes(fields.method)) problems.push(`method "${fields.method}" is not one of ${METHODS.join(', ')}.`)
   if (fields.uncertainty !== undefined && !(Number.isFinite(fields.uncertainty) && fields.uncertainty >= 0)) problems.push('uncertainty must be a number of 0 or more.')
   if (fields.objectBox !== undefined && !(fields.objectBox.length === 4 && fields.objectBox.every(n => Number.isFinite(n)))) problems.push('objectBox must hold four numbers: x, y, width, height.')
+  if (fields.referenceExtent !== undefined && !(Array.isArray(fields.referenceExtent) && fields.referenceExtent.length === 3 && fields.referenceExtent.every(n => Number.isFinite(n) && n > 0))) problems.push('referenceExtent must hold three numbers above 0: x, y, z.')
+  if (fields.geometryHash !== undefined && !/^[0-9a-f]{64}$/.test(fields.geometryHash)) problems.push('geometryHash must be a SHA-256 written as 64 lower-case hexadecimal digits.')
   return problems
 }
 
@@ -188,6 +205,7 @@ export function validate(fields) {
 export function scaleFor(fields, width, height) {
   const problems = validate(fields)
   if (problems.length) return { ok: false, reason: problems.join(' ') }
+  if (isModelFields(fields)) return { ok: false, reason: 'These fields describe a three-dimensional model, not an image.' }
   const rw = fields.referenceWidth, rh = fields.referenceHeight
   const same = (a, b) => a === rw && b === rh
   if (same(width, height)) return { ok: true, scale: fields.scale, resized: false, turned: false }
@@ -240,19 +258,22 @@ const wrapPacket = xmpmeta => `<?xpacket begin="\uFEFF" id="W5M0MpCehiHzreSzNTcz
 ${xmpmeta}
 <?xpacket end="w"?>`
 
+/** The order fields are written in, so the same input always gives the same bytes. */
+const ORDER = ['version', 'scale', 'referenceWidth', 'referenceHeight', 'geometryHash', 'method', 'methodNote',
+  'uncertainty', 'measuredBy', 'measuredAt', 'software', 'plane', 'objectWidthMm', 'objectHeightMm', 'objectThicknessMm']
+
 /** The rdf:Description holding the ISM fields, checked first (§5.1). */
 function ismDescription(fields) {
   const f = { version: ISM_VERSION, ...fields }
   const problems = validate(f)
   if (problems.length) throw new Error(problems.join(' '))
-  const order = ['version', 'scale', 'referenceWidth', 'referenceHeight', 'method', 'methodNote', 'uncertainty',
-    'measuredBy', 'measuredAt', 'software', 'plane', 'objectWidthMm', 'objectHeightMm', 'objectThicknessMm']
-  const attrs = order.filter(k => f[k] !== undefined).map(k => `\n        ism:${k}="${escapeXml(f[k])}"`).join('')
-  const box = f.objectBox
-    ? `\n      <ism:objectBox>\n        <rdf:Seq>${f.objectBox.map(n => `<rdf:li>${Math.round(n)}</rdf:li>`).join('')}</rdf:Seq>\n      </ism:objectBox>\n    `
+  const attrs = ORDER.filter(k => f[k] !== undefined).map(k => `\n        ism:${k}="${escapeXml(f[k])}"`).join('')
+  const seq = (k, show) => f[k]
+    ? `\n      <ism:${k}>\n        <rdf:Seq>${f[k].map(n => `<rdf:li>${show(n)}</rdf:li>`).join('')}</rdf:Seq>\n      </ism:${k}>`
     : ''
+  const seqs = seq('referenceExtent', n => n) + seq('objectBox', n => Math.round(n))
   return `<rdf:Description rdf:about=""
-        xmlns:ism="${ISM_NS}"${attrs}${box ? `>${box}</rdf:Description>` : '/>'}`
+        xmlns:ism="${ISM_NS}"${attrs}${seqs ? `>${seqs}\n    </rdf:Description>` : '/>'}`
 }
 
 /**
@@ -268,7 +289,7 @@ export function mergeIsmIntoXmp(xmp, fields) {
   if (binding) {
     const p = binding[1]
     out = out
-      .replace(new RegExp(`<${p}:objectBox>[\\s\\S]*?</${p}:objectBox>`, 'g'), '')
+      .replace(new RegExp(`<${p}:(objectBox|referenceExtent)>[\\s\\S]*?</${p}:\\1>`, 'g'), '')
       .replace(new RegExp(`<${p}:(\\w+)>[^<]*</${p}:\\1>`, 'g'), '')
       .replace(new RegExp(`\\s${p}:\\w+\\s*=\\s*("[^"]*"|'[^']*')`, 'g'), '')
       .replace(new RegExp(`\\sxmlns:${p}\\s*=\\s*("[^"]*"|'[^']*')`, 'g'), '')
@@ -502,4 +523,406 @@ function concat(parts) {
   let o = 0
   for (const p of parts) { out.set(p, o); o += p.length }
   return out
+}
+
+// ── Models (§13) ──────────────────────────────────────────────────────────────
+//
+// A model carries ISM in glTF's own XMP extension, KHR_xmp_json_ld: the packet
+// the asset points at, written as JSON-LD (§13.2). The pixel grid of an image
+// becomes the model's extent and a hash of its vertices (§13.1), and the
+// reader decides from them whether the scale still holds (§13.4).
+
+const KHR_XMP = 'KHR_xmp_json_ld'
+const GLB_MAGIC = 0x46546c67 // "glTF"
+const CHUNK_JSON = 0x4e4f534a
+const CHUNK_BIN = 0x004e4942
+
+/**
+ * A glTF asset from its bytes: a GLB, or a .gltf whose buffers are data: URIs.
+ * Returns { json, buffers, glb }; throws on what it cannot read. A .gltf whose
+ * buffers lie in other files cannot be read from its bytes alone.
+ */
+export function readGltf(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength)
+  let json, bin = null, glb = false
+  if (u8.length >= 12 && dv.getUint32(0, true) === GLB_MAGIC) {
+    glb = true
+    if (dv.getUint32(4, true) !== 2) throw new Error('Only glTF 2.0 is read.')
+    let o = 12
+    while (o + 8 <= u8.length) {
+      const len = dv.getUint32(o, true), type = dv.getUint32(o + 4, true)
+      const data = u8.subarray(o + 8, o + 8 + len)
+      if (type === CHUNK_JSON && json === undefined) json = JSON.parse(new TextDecoder('utf-8').decode(data))
+      else if (type === CHUNK_BIN && bin === null) bin = data
+      o += 8 + len
+    }
+    if (json === undefined) throw new Error('The GLB has no JSON chunk.')
+  } else {
+    json = JSON.parse(new TextDecoder('utf-8').decode(u8))
+  }
+  if (!json.asset || !String(json.asset.version).startsWith('2.')) throw new Error('Only glTF 2.0 is read.')
+  const buffers = (json.buffers ?? []).map((b, i) => {
+    if (b.uri === undefined) {
+      if (glb && i === 0 && bin) return bin
+      throw new Error(`Buffer ${i} has no data.`)
+    }
+    const m = /^data:[^,]*;base64,(.*)$/.exec(b.uri)
+    if (!m) throw new Error(`Buffer ${i} lies in another file (${b.uri}); read the model with its buffers inlined, or as a GLB.`)
+    return base64Bytes(m[1])
+  })
+  return { json, buffers, glb }
+}
+
+/** A GLB from a glTF's JSON and its binary chunk (§13.2): JSON padded with spaces, BIN with zeros. */
+export function writeGlb(json, bin) {
+  const text = new TextEncoder().encode(JSON.stringify(json))
+  const jsonChunk = padTo4(text, 0x20)
+  const binChunk = bin && bin.length ? padTo4(bin, 0) : null
+  const total = 12 + 8 + jsonChunk.length + (binChunk ? 8 + binChunk.length : 0)
+  const out = new Uint8Array(total)
+  const dv = new DataView(out.buffer)
+  dv.setUint32(0, GLB_MAGIC, true); dv.setUint32(4, 2, true); dv.setUint32(8, total, true)
+  dv.setUint32(12, jsonChunk.length, true); dv.setUint32(16, CHUNK_JSON, true)
+  out.set(jsonChunk, 20)
+  if (binChunk) {
+    const o = 20 + jsonChunk.length
+    dv.setUint32(o, binChunk.length, true); dv.setUint32(o + 4, CHUNK_BIN, true)
+    out.set(binChunk, o + 8)
+  }
+  return out
+}
+
+function padTo4(u8, fill) {
+  const n = (u8.length + 3) & ~3
+  if (n === u8.length) return u8
+  const out = new Uint8Array(n).fill(fill)
+  out.set(u8)
+  return out
+}
+
+function base64Bytes(b64) {
+  const bin = atob(b64)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+
+// ── The geometry: extent and hash (§13.3) ─────────────────────────────────────
+
+const COMPONENTS = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT2: 4, MAT3: 9, MAT4: 16 }
+const COMPONENT_BYTES = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 }
+
+/**
+ * An accessor's values as a Float32Array, decoded as the glTF specification
+ * decodes them: normalized integers to their fractions, sparse values put in.
+ */
+function accessorFloats(gltf, index) {
+  const { json, buffers } = gltf
+  const a = json.accessors?.[index]
+  if (!a) throw new Error(`Accessor ${index} does not exist.`)
+  const n = COMPONENTS[a.type], size = COMPONENT_BYTES[a.componentType]
+  if (!n || !size) throw new Error(`Accessor ${index} has a type this reader does not know.`)
+  const out = new Float32Array(a.count * n)
+  const decode = (dv, o, type, normalized) => {
+    switch (type) {
+      case 5126: return dv.getFloat32(o, true)
+      case 5120: { const c = dv.getInt8(o); return normalized ? Math.max(c / 127, -1) : c }
+      case 5121: { const c = dv.getUint8(o); return normalized ? c / 255 : c }
+      case 5122: { const c = dv.getInt16(o, true); return normalized ? Math.max(c / 32767, -1) : c }
+      case 5123: { const c = dv.getUint16(o, true); return normalized ? c / 65535 : c }
+      case 5125: return dv.getUint32(o, true)
+    }
+  }
+  const view = (viewIndex) => {
+    const bv = json.bufferViews?.[viewIndex]
+    if (!bv) throw new Error(`Buffer view ${viewIndex} does not exist.`)
+    if (bv.extensions && (bv.extensions.EXT_meshopt_compression || bv.extensions.KHR_meshopt_compression)) {
+      throw new Error('The geometry is meshopt-compressed; this reader cannot decode it.')
+    }
+    const buf = buffers[bv.buffer]
+    if (!buf) throw new Error(`Buffer ${bv.buffer} does not exist.`)
+    return { dv: new DataView(buf.buffer, buf.byteOffset + (bv.byteOffset ?? 0), bv.byteLength), stride: bv.byteStride }
+  }
+  if (a.bufferView !== undefined) {
+    const { dv, stride } = view(a.bufferView)
+    const step = stride || n * size
+    const base = a.byteOffset ?? 0
+    for (let i = 0; i < a.count; i++) {
+      for (let c = 0; c < n; c++) out[i * n + c] = decode(dv, base + i * step + c * size, a.componentType, a.normalized)
+    }
+  }
+  if (a.sparse) {
+    const s = a.sparse
+    const iv = view(s.indices.bufferView), vv = view(s.values.bufferView)
+    const isize = COMPONENT_BYTES[s.indices.componentType]
+    for (let k = 0; k < s.count; k++) {
+      const i = decode(iv.dv, (s.indices.byteOffset ?? 0) + k * isize, s.indices.componentType, false)
+      for (let c = 0; c < n; c++) out[i * n + c] = decode(vv.dv, (s.values.byteOffset ?? 0) + (k * n + c) * size, a.componentType, a.normalized)
+    }
+  }
+  return out
+}
+
+/** A node's own matrix, column-major, from `matrix` or from translation, rotation and scale. */
+function localMatrix(node) {
+  if (node.matrix) return node.matrix.slice()
+  const [tx, ty, tz] = node.translation ?? [0, 0, 0]
+  const [x, y, z, w] = node.rotation ?? [0, 0, 0, 1]
+  const [sx, sy, sz] = node.scale ?? [1, 1, 1]
+  return [
+    (1 - 2 * (y * y + z * z)) * sx, (2 * (x * y + z * w)) * sx, (2 * (x * z - y * w)) * sx, 0,
+    (2 * (x * y - z * w)) * sy, (1 - 2 * (x * x + z * z)) * sy, (2 * (y * z + x * w)) * sy, 0,
+    (2 * (x * z + y * w)) * sz, (2 * (y * z - x * w)) * sz, (1 - 2 * (x * x + y * y)) * sz, 0,
+    tx, ty, tz, 1,
+  ]
+}
+
+function multiply(a, b) {
+  const out = new Array(16)
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+    out[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3]
+  }
+  return out
+}
+
+/**
+ * The model's geometry as ISM sees it (§13.3):
+ *
+ * - `extent`: the width, height and depth, in the model's units, of the box
+ *   around every vertex of the scene, after every node's transform.
+ * - `hash`: SHA-256, in hex, of every POSITION value of every primitive of
+ *   every mesh, in the order the file lists them, each as a little-endian
+ *   32-bit float. Transforms are not in it: the hash says whether the vertices
+ *   are the ones measured, the extent whether the size still holds.
+ * - `vertexCount`: how many vertices went into the hash.
+ */
+export function modelGeometry(gltf) {
+  const { json } = gltf
+  for (const name of json.extensionsRequired ?? []) {
+    if (name === 'KHR_draco_mesh_compression' || name === 'EXT_meshopt_compression' || name === 'KHR_meshopt_compression') {
+      throw new Error(`The geometry is compressed (${name}); this reader cannot decode it.`)
+    }
+  }
+  const positions = new Map() // accessor index → Float32Array
+  const meshPositions = []
+  for (const mesh of json.meshes ?? []) {
+    for (const prim of mesh.primitives ?? []) {
+      if (prim.extensions?.KHR_draco_mesh_compression) throw new Error('The geometry is Draco-compressed; this reader cannot decode it.')
+      const idx = prim.attributes?.POSITION
+      if (idx === undefined) continue
+      if (!positions.has(idx)) positions.set(idx, accessorFloats(gltf, idx))
+      meshPositions.push(positions.get(idx))
+    }
+  }
+  const vertexCount = meshPositions.reduce((n, p) => n + p.length / 3, 0)
+  if (!vertexCount) throw new Error('The model has no vertices.')
+  const bytes = new Uint8Array(vertexCount * 12)
+  const out = new DataView(bytes.buffer)
+  let o = 0
+  for (const p of meshPositions) for (let i = 0; i < p.length; i++, o += 4) out.setFloat32(o, p[i], true)
+
+  // The extent: the scene's nodes, from its roots, with each node's world transform.
+  const nodes = json.nodes ?? []
+  let roots
+  if (json.scenes?.length) roots = json.scenes[json.scene ?? 0]?.nodes ?? []
+  else {
+    const children = new Set(nodes.flatMap(n => n.children ?? []))
+    roots = nodes.map((_, i) => i).filter(i => !children.has(i))
+  }
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity]
+  const visit = (i, parent, seen) => {
+    if (seen.has(i)) throw new Error('The node hierarchy has a cycle.')
+    const node = nodes[i]
+    if (!node) throw new Error(`Node ${i} does not exist.`)
+    const world = multiply(parent, localMatrix(node))
+    if (node.mesh !== undefined) {
+      for (const prim of json.meshes[node.mesh].primitives ?? []) {
+        const p = positions.get(prim.attributes?.POSITION)
+        if (!p) continue
+        for (let v = 0; v < p.length; v += 3) {
+          const x = p[v], y = p[v + 1], z = p[v + 2]
+          for (let r = 0; r < 3; r++) {
+            const w = world[r] * x + world[4 + r] * y + world[8 + r] * z + world[12 + r]
+            if (w < min[r]) min[r] = w
+            if (w > max[r]) max[r] = w
+          }
+        }
+      }
+    }
+    for (const c of node.children ?? []) visit(c, world, new Set(seen).add(i))
+  }
+  const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+  for (const r of roots) visit(r, identity, new Set())
+  if (!Number.isFinite(min[0])) throw new Error('No mesh in the scene.')
+  return { extent: [0, 1, 2].map(r => max[r] - min[r]), hash: sha256Hex(bytes), vertexCount }
+}
+
+// ── The fields in the file (§13.2) ────────────────────────────────────────────
+
+/** The packet the asset points at, in KHR_xmp_json_ld, or null. */
+export function assetPacket(json) {
+  const i = json.asset?.extensions?.[KHR_XMP]?.packet
+  return i === undefined ? null : json.extensions?.[KHR_XMP]?.packets?.[i] ?? null
+}
+
+/** The prefix a JSON-LD packet binds to the ISM namespace, or null. */
+function ismPrefix(packet) {
+  const ctx = packet?.['@context']
+  if (!ctx || typeof ctx !== 'object') return null
+  return Object.keys(ctx).find(k => ctx[k] === ISM_NS) ?? null
+}
+
+/**
+ * The ISM fields in a JSON-LD packet (§13.2), typed as parseIsm types them, or
+ * null. The prefix is whatever the packet's @context binds to the namespace.
+ */
+export function parseIsmJsonLd(packet) {
+  const p = ismPrefix(packet)
+  if (!p) return null
+  const fields = {}
+  for (const [key, value] of Object.entries(packet)) {
+    if (!key.startsWith(p + ':')) continue
+    const name = key.slice(p.length + 1)
+    if (SEQS.includes(name)) fields[name] = (value?.['@list'] ?? []).map(Number)
+    else if (REALS.includes(name) || INTEGERS.includes(name)) fields[name] = Number(value)
+    else if (TEXTS.includes(name)) fields[name] = String(value)
+  }
+  return Object.keys(fields).length ? fields : null
+}
+
+/** The ISM fields of a glTF asset (readGltf), or null. */
+export function modelIsm(gltf) {
+  return parseIsmJsonLd(assetPacket(gltf.json))
+}
+
+/**
+ * The model's scale as the file is now (§13.4): millimetres per model unit,
+ * or the reason there is none. `geometry` is modelGeometry of the same file.
+ *
+ * The extents are compared sorted, so a model turned by quarter turns — from
+ * Y up to Z up, as many programs do on import — keeps its scale.
+ *
+ * - `geometry: 'measured'` — the vertices are the ones measured (the hash agrees).
+ * - `geometry: 'changed'` — they are not, but the size is: the scale holds.
+ * - `rescaled: true` — every extent changed by the same factor, as when the
+ *   units were changed; the scale is divided by that factor.
+ * - `sizeMm` — the model's extent along its own axes, in millimetres.
+ */
+export function modelScaleFor(fields, geometry) {
+  const problems = validate(fields)
+  if (problems.length) return { ok: false, reason: problems.join(' ') }
+  if (!isModelFields(fields)) return { ok: false, reason: 'These fields describe an image, not a model.' }
+  const ref = [...fields.referenceExtent].sort((a, b) => a - b)
+  const cur = [...geometry.extent].sort((a, b) => a - b)
+  const ratios = cur.map((c, i) => c / ref[i])
+  const same = geometry.hash === fields.geometryHash ? 'measured' : 'changed'
+  // Turned when the axes no longer line up one to one, whatever the factor.
+  const turnedAt = k => !geometry.extent.every((c, i) => Math.abs(c / fields.referenceExtent[i] / k - 1) <= ASPECT_TOLERANCE)
+  const done = (scale, k, rest) => ({
+    ok: true, scale, geometry: same, turned: turnedAt(k), sizeMm: geometry.extent.map(e => e * scale), ...rest,
+  })
+  if (ratios.every(r => Math.abs(r - 1) <= ASPECT_TOLERANCE)) return done(fields.scale, 1, { rescaled: false })
+  const k = ratios[2]
+  if (ratios.every(r => Math.abs(r / k - 1) <= ASPECT_TOLERANCE)) return done(fields.scale / k, k, { rescaled: true, factor: k })
+  const show = e => e.map(n => Number(n.toPrecision(4))).join(' × ')
+  return {
+    ok: false,
+    reason: `The model's extent is ${show(geometry.extent)} units but the scale was set on ${show(fields.referenceExtent)}, in other proportions. It has been cut or changed since, so the scale no longer applies.`,
+  }
+}
+
+/**
+ * The model with ISM written into it (§13.5), as a GLB or as .gltf text, as it
+ * came. The writer works out referenceExtent and geometryHash from the file
+ * itself; the caller gives the scale and how it was obtained. Other metadata in
+ * the asset's packet is kept, and ISM already there is replaced.
+ */
+export function writeModelIsm(bytes, fields) {
+  const gltf = readGltf(bytes)
+  const geometry = modelGeometry(gltf)
+  const { referenceExtent: _e, geometryHash: _h, ...given } = fields
+  const f = { version: ISM_VERSION, ...given, referenceExtent: geometry.extent, geometryHash: geometry.hash }
+  const problems = validate(f)
+  if (problems.length) throw new Error(problems.join(' '))
+
+  const json = structuredClone(gltf.json)
+  json.extensionsUsed = [...new Set([...(json.extensionsUsed ?? []), KHR_XMP])]
+  json.extensions ??= {}
+  json.extensions[KHR_XMP] ??= { packets: [] }
+  const packets = json.extensions[KHR_XMP].packets ??= []
+  json.asset.extensions ??= {}
+  let index = json.asset.extensions[KHR_XMP]?.packet
+  if (index === undefined || !packets[index]) {
+    packets.push({ '@context': {}, '@id': '' })
+    index = packets.length - 1
+    json.asset.extensions[KHR_XMP] = { packet: index }
+  }
+  const packet = packets[index]
+  packet['@context'] ??= {}
+  let p = ismPrefix(packet)
+  if (p) for (const key of Object.keys(packet)) if (key.startsWith(p + ':')) delete packet[key]
+  if (!p) {
+    p = 'ism'
+    for (let n = 1; packet['@context'][p] !== undefined; n++) p = `ism${n}`
+    packet['@context'][p] = ISM_NS
+  }
+  for (const k of ['version', 'scale', 'referenceExtent', ...ORDER.filter(k => !['version', 'scale', 'referenceWidth', 'referenceHeight'].includes(k))]) {
+    if (f[k] === undefined) continue
+    packet[`${p}:${k}`] = SEQS.includes(k) ? { '@list': f[k] } : f[k]
+  }
+  if (gltf.glb) return writeGlb(json, gltf.buffers[0] && json.buffers?.[0]?.uri === undefined ? gltf.buffers[0] : null)
+  return new TextEncoder().encode(JSON.stringify(json, null, 2))
+}
+
+/** The ISM fields of a model file, its geometry and the reading, all at once. */
+export function readModel(bytes) {
+  const gltf = readGltf(bytes)
+  const fields = modelIsm(gltf)
+  const geometry = modelGeometry(gltf)
+  return { fields, geometry, reading: fields ? modelScaleFor(fields, geometry) : null }
+}
+
+// ── SHA-256 (FIPS 180-4), so the library stays without dependencies ──────────
+
+const K256 = new Uint32Array([
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+])
+
+/** SHA-256 of the bytes, as 64 lower-case hexadecimal digits. */
+export function sha256Hex(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  const bitLen = u8.length * 8
+  const padded = new Uint8Array(((u8.length + 9 + 63) >> 6) << 6)
+  padded.set(u8)
+  padded[u8.length] = 0x80
+  const pdv = new DataView(padded.buffer)
+  pdv.setUint32(padded.length - 8, Math.floor(bitLen / 0x100000000))
+  pdv.setUint32(padded.length - 4, bitLen >>> 0)
+  const h = new Uint32Array([0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19])
+  const w = new Uint32Array(64)
+  const rotr = (x, n) => (x >>> n) | (x << (32 - n))
+  for (let off = 0; off < padded.length; off += 64) {
+    for (let i = 0; i < 16; i++) w[i] = pdv.getUint32(off + i * 4)
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3)
+      const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10)
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0
+    }
+    let [a, b, c, d, e, f, g, hh] = h
+    for (let i = 0; i < 64; i++) {
+      const t1 = (hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + K256[i] + w[i]) >>> 0
+      const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0
+      hh = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0
+    }
+    h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += hh
+  }
+  return [...h].map(x => x.toString(16).padStart(8, '0')).join('')
 }

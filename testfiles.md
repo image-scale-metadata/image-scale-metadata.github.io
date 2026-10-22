@@ -59,10 +59,31 @@ object block 30 × 20 mm, and a bar exactly 50 mm long. The scale is 0.1 mm per 
 The bar is the check that needs no software: measure it with the reader's own measuring tool, and
 it must come out at 50 mm in every file that has a scale.
 
+## Models (GLB)
+
+Made from nothing, like the PNG and TIFF set: an ellipsoid exactly **60 × 20 × 40 mm** (x × y × z,
+with y up, as glTF stands a model), written in metres and given ISM by the reference writer
+(§13). Every other file is the measured one changed the way models are changed between programs,
+and keeps the measured file's packet, as a program that kept the metadata would. The measured
+file also has a little XMP of its own, which the writer kept beside ISM.
+
+| File | What was done to it | The answer |
+|---|---|---|
+| `20-model-measured.glb` | Nothing | 1000 mm per unit: 60 × 20 × 40 mm. The vertices are the ones measured |
+| `21-model-decimated.glb` | Simplified, from 2112 vertices to 144 | 1000 mm per unit, 60 × 20 × 40 mm. The hash differs, so the reader says the geometry has changed (§13.4.6) |
+| `22-model-turned.glb` | Stood on end by its node, Y up to Z up | 1000 mm per unit: 60 × 40 × 20 mm along the file's axes. Turning does not change the size (§13.4.1) |
+| `23-model-in-millimetres.glb` | Exported in millimetres: every coordinate × 1000 | 1 mm per unit, still 60 × 20 × 40 mm (§13.4.3) |
+| `24-model-cut.glb` | Cut in half along its length | **No scale.** The proportions changed (§13.4.4) |
+| `25-model-no-ism.glb` | The model without ISM | **No measured scale.** The file's own metres say 60 × 20 × 40 mm, but nothing says that was measured (§13.4.5) |
+
+All six are valid glTF 2.0 by the Khronos glTF Validator (2.0.0-dev.3.10), with no errors or
+warnings, and the packet is read by glTF-Transform's `KHR_xmp_json_ld` support.
+
 ## How they are made
 
 `node tools/make-testfiles.mjs <photograph.jpg> <mm-per-px>` makes the JPEG set from a photograph
-of your own; `node tools/make-raster-testfiles.mjs` makes the PNG and TIFF set from nothing at all.
+of your own; `node tools/make-raster-testfiles.mjs` makes the PNG and TIFF set from nothing at all,
+and `node tools/make-model-testfiles.mjs` the models.
 Both use the reference writer, so the files and the library cannot drift apart.
 
 The answers above are also the Python library's test suite

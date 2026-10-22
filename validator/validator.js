@@ -4,7 +4,9 @@
 // writer that a reader cannot check, the page says so rather than pass it
 // silently.
 
-import { METHODS, findXmp, parseIsm, scaleFor, validate } from '../js/ism.js'
+import {
+  ISM_NS, METHODS, findXmp, isModelFields, modelGeometry, modelIsm, modelScaleFor, parseIsm, readGltf, scaleFor, validate,
+} from '../js/ism.js'
 
 const drop = document.getElementById('drop')
 const report = document.getElementById('report')
@@ -22,6 +24,7 @@ drop.addEventListener('drop', e => {
 
 async function check(file) {
   const bytes = new Uint8Array(await file.arrayBuffer())
+  if (isGltf(bytes)) return checkModel(file, bytes)
   const format = formatOf(bytes)
   const xmp = findXmp(bytes)
   const fields = xmp ? parseIsm(xmp) : null
@@ -42,9 +45,15 @@ async function check(file) {
   if (!xmp) return render(file, 'No ISM', checks, null, size)
 
   add(fields ? 'pass' : 'fail', fields ? 'The packet binds the ISM namespace' : 'The packet has no ISM',
-    fields ? 'https://w3id.org/ism/0.1/' : 'The fields are absent, or bound to another namespace.')
+    fields ? ISM_NS : 'The fields are absent, or bound to another namespace.')
 
   if (!fields) return render(file, 'No ISM', checks, null, size)
+
+  if (isModelFields(fields)) {
+    add('fail', 'The fields describe a model, not an image',
+      'referenceExtent and geometryHash belong to a three-dimensional model (§13); an image carries a pixel grid.')
+    return render(file, 'Not valid', checks, fields, size)
+  }
 
   const core = ['scale', 'referenceWidth', 'referenceHeight', 'version']
   const missing = core.filter(k => fields[k] === undefined || fields[k] === null)
@@ -90,13 +99,90 @@ async function check(file) {
   render(file, reading && !reading.ok ? `${level} — but the scale no longer applies` : level, checks, fields, size)
 }
 
+// ── Models (§13) ─────────────────────────────────────────────────────────────
+
+function isGltf(u8) {
+  if (u8.length >= 4 && u8[0] === 0x67 && u8[1] === 0x6c && u8[2] === 0x54 && u8[3] === 0x46) return true
+  const head = new TextDecoder().decode(u8.subarray(0, 256)).trimStart()
+  return head.startsWith('{') && /"asset"\s*:/.test(new TextDecoder().decode(u8.subarray(0, 4096)))
+}
+
+function checkModel(file, bytes) {
+  const checks = []
+  const add = (state, title, detail) => checks.push({ state, title, detail })
+  let gltf, geometry
+  try {
+    gltf = readGltf(bytes)
+  } catch (e) {
+    add('fail', 'The model could not be read', e.message)
+    return render(file, 'Not read', checks, null, null)
+  }
+  add('pass', `The file is a glTF 2.0 model${gltf.glb ? ' (GLB)' : ''}`,
+    'The XMP packet belongs in KHR_xmp_json_ld, in the packet the asset points at (§13.2).')
+
+  try {
+    geometry = modelGeometry(gltf)
+    add('pass', `Its geometry was read: ${geometry.vertexCount.toLocaleString()} vertices`,
+      `Extent ${showExtent(geometry.extent)} units. Hash ${geometry.hash.slice(0, 16)}… (§13.3).`)
+  } catch (e) {
+    add('fail', 'Its geometry could not be read', e.message)
+  }
+
+  const fields = modelIsm(gltf)
+  const hasPacket = (gltf.json.extensionsUsed ?? []).includes('KHR_xmp_json_ld') && gltf.json.asset?.extensions?.KHR_xmp_json_ld
+  add(hasPacket ? 'pass' : 'fail', hasPacket ? 'The asset points at an XMP packet' : 'The asset points at no XMP packet',
+    hasPacket ? 'KHR_xmp_json_ld is declared in extensionsUsed.' : 'Without one there is nowhere for ISM to be.')
+  if (!fields) {
+    add('skip', 'No ISM: the model\u2019s scale is not measured',
+      geometry ? `glTF\u2019s own unit is the metre, so the file says ${showMm(geometry.extent.map(e => e * 1000))} — but nothing says that was measured (§13.4.5).` : 'Nothing to read.')
+    return render(file, 'No ISM', checks, null, null)
+  }
+  add('pass', 'The packet binds the ISM namespace', ISM_NS)
+
+  const problems = validate(fields)
+  const missing = ['version', 'scale', 'referenceExtent', 'geometryHash'].filter(k => fields[k] === undefined)
+  add(missing.length ? 'fail' : 'pass',
+    missing.length ? `The core is incomplete: ${missing.join(', ')} missing` : 'All four core fields are there',
+    'version, scale, referenceExtent, geometryHash (§13.1).')
+  add(problems.length ? 'fail' : 'pass', problems.length ? 'A field is not valid' : 'Every field present is valid',
+    problems.length ? problems.join(' ') : 'Types and ranges as the specification gives them.')
+  if (fields.method !== undefined) {
+    const known = METHODS.includes(fields.method)
+    add(known ? 'pass' : 'fail', known ? `The method is \u201c${fields.method}\u201d` : `\u201c${fields.method}\u201d is not a method`,
+      `One of: ${METHODS.join(', ')} (§4.2).`)
+  }
+
+  let reading = null
+  if (geometry && !problems.length) {
+    reading = modelScaleFor(fields, geometry)
+    if (reading.ok) {
+      add(reading.geometry === 'measured' ? 'pass' : 'skip',
+        reading.geometry === 'measured' ? 'The vertices are the ones measured' : 'The vertices have changed since the scale was set',
+        reading.geometry === 'measured' ? 'The hash agrees (§13.4.6).' : 'The hash differs, but the size does not: the model was simplified or written again (§13.4.6).')
+      add('pass', `A reader shows ${round(reading.scale, 6)} mm per unit: ${showMm(reading.sizeMm)}`,
+        reading.rescaled ? `Every extent changed by ×${round(reading.factor, 4)}, as when the unit is changed; the scale is divided by it (§13.4.3).`
+          : reading.turned ? 'Turned by quarter turns since it was measured; the scale holds (§13.4.1).' : 'Straight from the file (§13.4.2).')
+    } else {
+      add('fail', 'A reader must show no scale', reading.reason)
+    }
+  }
+  const level = levelOf(fields, problems)
+  render(file, reading && !reading.ok ? `${level} — but the scale no longer applies` : level, checks, fields, null)
+}
+
+const showExtent = e => e.map(n => Number(n.toPrecision(5))).join(' × ')
+const showMm = e => e.map(n => round(n, 2)).join(' × ') + ' mm'
+
 /** The conformance level the fields reach (§9). */
 function levelOf(f, problems) {
   if (problems.length) return 'Not valid'
-  const core = f.scale != null && f.referenceWidth != null && f.referenceHeight != null && f.version != null
+  const model = isModelFields(f)
+  const core = model
+    ? f.scale != null && f.referenceExtent != null && f.geometryHash != null && f.version != null
+    : f.scale != null && f.referenceWidth != null && f.referenceHeight != null && f.version != null
   if (!core) return 'Not valid'
   const b = f.method != null && f.uncertainty != null && f.measuredAt != null && f.software != null
-  const c = b && f.objectBox != null && (f.objectWidthMm != null || f.objectHeightMm != null)
+  const c = b && (model || f.objectBox != null) && (f.objectWidthMm != null || f.objectHeightMm != null)
   return c ? 'ISM-C' : b ? 'ISM-B' : 'ISM-A'
 }
 

@@ -1,6 +1,7 @@
 # Image Scale Metadata (ISM)
 
-**Draft 0.1 — comments welcome.**
+**Draft 0.2 — comments welcome.** 0.2 adds three-dimensional models; nothing
+about images has changed since 0.1, which is kept in `0.1/`.
 
 A small, open format for carrying the true scale of an image inside the image
 file itself: how many millimetres one pixel covers on the object, which pixel
@@ -24,7 +25,7 @@ Four required fields, in the file's XMP, namespace `https://w3id.org/ism/0.1/`
 | `ism:referenceWidth` | width in pixels of the image the scale was set on |
 | `ism:referenceHeight` | height in pixels of the same |
 
-Recommended: `method` (ruler, calipers, target, optics, other), `methodNote`,
+Recommended: `method` (ruler, calipers, target, optics, scanner, ct, other), `methodNote`,
 `uncertainty`, `measuredBy`, `measuredAt`, `software`, `plane`. Optional:
 `objectBox`, `objectWidthMm`, `objectHeightMm`, `objectThicknessMm`.
 
@@ -33,6 +34,21 @@ scales it when the image has the same shape at another size; keeps it when
 the image is turned by 90°; and refuses it otherwise, because the image has
 been cropped or changed.
 
+## Models
+
+A three-dimensional model carries the same fields in glTF's `KHR_xmp_json_ld`
+extension, with two of its own in place of the pixel grid:
+
+| Field | Meaning |
+|---|---|
+| `ism:scale` | millimetres per model unit (1000 for a glTF whose metres are true) |
+| `ism:referenceExtent` | the model's width, height and depth in model units when the scale was set |
+| `ism:geometryHash` | SHA-256 of its vertices when the scale was set |
+
+A reader works both out again from the file. The same size keeps the scale; the
+same proportions at another size (a unit changed) rescale it; other proportions
+refuse it. The hash says whether the vertices are still the ones measured.
+
 ## What is here
 
 | Path | What |
@@ -40,7 +56,8 @@ been cropped or changed.
 | `js/ism.js` | Reference reader and writer, no dependencies, browser and Node 18+ |
 | `viewer/` | A web page that opens an image, reads its ISM and draws the scale — and, for a JPEG with a ruler in the picture, writes the scale into the file: drag along the ruler, give its length, download. Other metadata in the file is kept. Nothing is uploaded |
 | `tools/make-testfiles.mjs` | Makes test files (measured, resized, turned, cropped, none) from one measured JPEG (macOS) |
-| `testfiles/` | Test files made from a published find, with the expected result for each |
+| `tools/make-model-testfiles.mjs` | Makes the model test files (measured, simplified, turned, in millimetres, cut, none) from nothing |
+| `testfiles/` | Test files made from a published find, made images and made models, with the expected result for each |
 | `test/` | Tests: `npm test` |
 
 ## Running the viewer

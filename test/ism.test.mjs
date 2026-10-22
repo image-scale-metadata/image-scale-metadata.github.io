@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  ISM_NS, embedXmpInJpeg, findXmp, jpegHasXmpSegment, jpegOrientation, mergeIsmIntoXmp, niceLength, parseIsm, readIsm,
+  ISM_NS, ISM_VERSION, embedXmpInJpeg, findXmp, jpegHasXmpSegment, jpegOrientation, mergeIsmIntoXmp, niceLength, parseIsm, readIsm,
   scaleFor, validate, writeIsmXmp,
 } from '../js/ism.js'
 import * as ism from '../js/ism.js'
@@ -17,7 +17,7 @@ const FULL = {
 
 test('what is written is read back, all of it', () => {
   const back = parseIsm(writeIsmXmp(FULL))
-  assert.deepEqual(back, { version: '0.1', ...FULL })
+  assert.deepEqual(back, { version: ISM_VERSION, ...FULL })
 })
 
 test('the same fields always give the same packet', () => {
@@ -92,7 +92,7 @@ test('merging keeps the file\'s own metadata and replaces older ISM', () => {
   const merged = mergeIsmIntoXmp(museum, { scale: 0.037, referenceWidth: 1078, referenceHeight: 1077, method: 'ruler' })
   assert.match(merged, /Bronze bird/)
   assert.match(merged, /photoshop:Credit="Kalmar läns museum"/)
-  assert.deepEqual(parseIsm(merged), { version: '0.1', method: 'ruler', scale: 0.037, referenceWidth: 1078, referenceHeight: 1077 })
+  assert.deepEqual(parseIsm(merged), { version: ISM_VERSION, method: 'ruler', scale: 0.037, referenceWidth: 1078, referenceHeight: 1077 })
   assert.equal((merged.match(/https:\/\/w3id\.org\/ism\/0\.1\//g) || []).length, 1, 'one ISM namespace, the old one gone')
   assert.doesNotMatch(merged, /sc:/)
 })
@@ -105,7 +105,7 @@ test('merging into a packet that shares its Description with other fields keeps 
     </rdf:Description></rdf:RDF></x:xmpmeta>`
   const merged = mergeIsmIntoXmp(shared, { scale: 0.04, referenceWidth: 100, referenceHeight: 50 })
   assert.match(merged, /photarch:widthMm="28"/)
-  assert.deepEqual(parseIsm(merged), { version: '0.1', scale: 0.04, referenceWidth: 100, referenceHeight: 50 })
+  assert.deepEqual(parseIsm(merged), { version: ISM_VERSION, scale: 0.04, referenceWidth: 100, referenceHeight: 50 })
 })
 
 test('EXIF orientation is read, and an XMP segment is noticed', () => {

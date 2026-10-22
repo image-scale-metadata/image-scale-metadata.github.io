@@ -3,7 +3,7 @@ layout: default
 ---
 {% assign address = "https://w3id.org/ism/0.1/method/" | append: page.method %}
 <div class="hero">
-<p class="hero__eyebrow">Image Scale Metadata · version 0.1 · a value of <code>ism:method</code></p>
+<p class="hero__eyebrow">Image Scale Metadata · a value of <code>ism:method</code>{% if page.since %} · since {{ page.since }}{% endif %}</p>
 <h1>{{ page.label }}</h1>
 <p class="hero__lede">{{ page.meaning }}</p>
 <dl class="facts">
@@ -14,6 +14,6 @@ layout: default
 <dt>In Linked Art</dt>
 <dd>This address can be used as the <code>technique</code> of the <code>AttributeAssignment</code> that says how an object's dimensions were obtained (<a href="{{ '/#73-linked-art-and-museum-records' | relative_url }}">§7.3</a>).</dd>
 <dt>Defined in</dt>
-<dd><a href="{{ '/#42-how-the-scale-was-obtained--recommended' | relative_url }}">Image Scale Metadata 0.1, §4.2</a></dd>
+<dd><a href="{{ '/#42-how-the-scale-was-obtained--recommended' | relative_url }}">Image Scale Metadata, §4.2</a>{% if page.since %}, since version {{ page.since }}{% endif %}</dd>
 </dl>
 </div>
