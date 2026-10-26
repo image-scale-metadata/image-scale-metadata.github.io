@@ -38,6 +38,61 @@ test('the element form and another prefix are read too', () => {
   assert.deepEqual(parseIsm(xmp), { version: '0.1', scale: 0.01, referenceWidth: 2000, referenceHeight: 1000, methodNote: 'ruler & eye' })
 })
 
+/** An IPTC Image Region carrying ISM of its own, for the plane a ruler lies in. */
+const RULER_REGION = `<rdf:Description rdf:about="" xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/" xmlns:ism="${ISM_NS}">
+      <Iptc4xmpExt:ImageRegion><rdf:Bag><rdf:li rdf:parseType="Resource">
+        <Iptc4xmpExt:rId>ruler</Iptc4xmpExt:rId>
+        <ism:scale>0.061</ism:scale><ism:plane>table surface</ism:plane>
+        <ism:objectBox><rdf:Seq><rdf:li>1</rdf:li><rdf:li>2</rdf:li><rdf:li>3</rdf:li><rdf:li>4</rdf:li></rdf:Seq></ism:objectBox>
+      </rdf:li></rdf:Bag></Iptc4xmpExt:ImageRegion>
+    </rdf:Description>`
+
+test('ISM inside an image region is not the scale of the image', () => {
+  const xmp = writeIsmXmp({ ...FULL, objectBox: undefined }).replace('</rdf:RDF>', `${RULER_REGION}</rdf:RDF>`)
+  const f = parseIsm(xmp)
+  assert.equal(f.scale, 0.0428)
+  assert.equal(f.plane, 'Upper surface of the find')
+  assert.equal(f.objectBox, undefined)
+})
+
+test('a region alone gives the image no scale', () => {
+  const xmp = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    ${RULER_REGION}</rdf:RDF></x:xmpmeta>`
+  assert.equal(parseIsm(xmp), null)
+})
+
+test('merging replaces the image\'s ISM and leaves a region\'s ISM alone', () => {
+  // The region shares the image's Description and its binding, the harder case.
+  const xmp = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about="" xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/" xmlns:ism="${ISM_NS}"
+      ism:version="0.1" ism:scale="0.5" ism:referenceWidth="10" ism:referenceHeight="10">
+      <ism:objectBox><rdf:Seq><rdf:li>1</rdf:li><rdf:li>1</rdf:li><rdf:li>5</rdf:li><rdf:li>5</rdf:li></rdf:Seq></ism:objectBox>
+      <Iptc4xmpExt:ImageRegion><rdf:Bag><rdf:li rdf:parseType="Resource">
+        <ism:scale>0.061</ism:scale><ism:plane>table surface</ism:plane>
+      </rdf:li></rdf:Bag></Iptc4xmpExt:ImageRegion>
+    </rdf:Description></rdf:RDF></x:xmpmeta>`
+  const merged = mergeIsmIntoXmp(xmp, { scale: 0.04, referenceWidth: 100, referenceHeight: 50 })
+  assert.deepEqual(parseIsm(merged), { version: ISM_VERSION, scale: 0.04, referenceWidth: 100, referenceHeight: 50 })
+  assert.match(merged, /<ism:scale>0\.061<\/ism:scale><ism:plane>table surface<\/ism:plane>/)
+  assert.match(merged, /<rdf:Description rdf:about="" xmlns:Iptc4xmpExt="[^"]+" xmlns:ism="[^"]+">/, 'the region keeps its binding')
+  assert.doesNotMatch(merged, /ism:scale="0\.5"|<ism:objectBox>/)
+})
+
+test('a merged packet has one wrapper, whether the file\'s had one or not', () => {
+  const count = (s, what) => (s.match(new RegExp(`<\\?xpacket ${what}`, 'g')) || []).length
+  const wrapped = mergeIsmIntoXmp(mergeIsmIntoXmp(writeIsmXmp(FULL), { scale: 0.05, referenceWidth: 10, referenceHeight: 10 }),
+    { scale: 0.06, referenceWidth: 10, referenceHeight: 10 })
+  const bare = mergeIsmIntoXmp('<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"></rdf:RDF></x:xmpmeta>',
+    { scale: 0.06, referenceWidth: 10, referenceHeight: 10 })
+  for (const packet of [wrapped, bare]) {
+    assert.equal(count(packet, 'begin'), 1)
+    assert.equal(count(packet, 'end'), 1)
+    assert.match(packet, /^<\?xpacket begin=/)
+    assert.match(packet, /<\?xpacket end="w"\?>$/)
+    assert.equal(parseIsm(packet).scale, 0.06)
+  }
+})
+
 test('a packet without the namespace has no ISM', () => {
   assert.equal(parseIsm('<x:xmpmeta><rdf:Description photarch:widthMm="4"/></x:xmpmeta>'), null)
   assert.equal(findXmp(new Uint8Array([1, 2, 3])), null)

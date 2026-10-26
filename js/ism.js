@@ -133,28 +133,87 @@ const unescapeXml = s => s
   .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
   .replace(/&amp;/g, '&')
 
+/** A tag, a comment, a processing instruction or a CDATA section in an XMP packet. */
+const XML_TOKEN = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<(\/?)([A-Za-z_][\w.:-]*)((?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/g
+
+/**
+ * The properties that belong to the image as a whole: the attributes of each
+ * rdf:Description directly under rdf:RDF, and the elements directly inside it.
+ * A field nested deeper — inside an IPTC Image Region, say — belongs to that
+ * structure, not to the image, and is left out. Each property comes back with
+ * where it stands in the packet, so a writer can take out exactly these.
+ */
+function topLevelProperties(xmp) {
+  const attrs = [], elements = []
+  const stack = []
+  let open = null // the property element being read: { name, from, start, depth }
+  for (const m of xmp.matchAll(XML_TOKEN)) {
+    const [whole, closing, name, attributes, selfClosing] = m
+    if (!name) continue
+    if (closing) {
+      stack.pop()
+      if (open && stack.length === open.depth) {
+        elements.push({ name: open.name, inner: xmp.slice(open.from, m.index), start: open.start, end: m.index + whole.length })
+        open = null
+      }
+      continue
+    }
+    const parent = stack[stack.length - 1]
+    if (name === 'rdf:Description' && parent === 'rdf:RDF') {
+      const at = m.index + 1 + name.length
+      for (const a of attributes.matchAll(/\s+([^\s=]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+        attrs.push({ name: a[1], value: a[2] ?? a[3], start: at + a.index, end: at + a.index + a[0].length })
+      }
+    } else if (parent === 'rdf:Description' && stack[stack.length - 2] === 'rdf:RDF' && !selfClosing) {
+      open = { name, from: m.index + whole.length, start: m.index, depth: stack.length }
+    }
+    if (!selfClosing) stack.push(name)
+  }
+  return { attrs, elements }
+}
+
+/** Every prefix a packet binds to the ISM namespace, anywhere in it. */
+function ismPrefixes(xmp) {
+  const ns = ISM_NS.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+  return new Set([...xmp.matchAll(new RegExp(`xmlns:([A-Za-z_][\\w.-]*)\\s*=\\s*["']${ns}["']`, 'g'))].map(m => m[1]))
+}
+
+/** The ISM field a qualified name stands for, or null when it is not ISM. */
+const ismField = (name, prefixes) => {
+  const colon = name.indexOf(':')
+  return colon > 0 && prefixes.has(name.slice(0, colon)) ? name.slice(colon + 1) : null
+}
+
 /**
  * The ISM fields in an XMP packet, typed, or null when the packet has none.
  * The prefix is whatever the packet binds to the ISM namespace, not assumed to
  * be "ism". Both XMP forms are read: attributes on rdf:Description, and
- * child elements; objectBox as an rdf:Seq.
+ * child elements; objectBox as an rdf:Seq. Only the image's own fields count:
+ * ISM written inside another structure, such as an IPTC Image Region, is not
+ * read as the scale of the whole image.
  */
 export function parseIsm(xmp) {
   if (!xmp) return null
-  const binding = new RegExp(`xmlns:([A-Za-z_][\\w.-]*)\\s*=\\s*["']${ISM_NS.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}["']`).exec(xmp)
-  if (!binding) return null
-  const p = binding[1]
-  const raw = {}
-  for (const m of xmp.matchAll(new RegExp(`\\b${p}:(\\w+)\\s*=\\s*"([^"]*)"`, 'g'))) raw[m[1]] = unescapeXml(m[2])
-  for (const m of xmp.matchAll(new RegExp(`\\b${p}:(\\w+)\\s*=\\s*'([^']*)'`, 'g'))) raw[m[1]] = unescapeXml(m[2])
-  for (const m of xmp.matchAll(new RegExp(`<${p}:(\\w+)>([^<]*)</${p}:\\1>`, 'g'))) raw[m[1]] = unescapeXml(m[2].trim())
+  const prefixes = ismPrefixes(xmp)
+  if (!prefixes.size) return null
+  const { attrs, elements } = topLevelProperties(xmp)
+  const raw = {}, seqs = {}
+  for (const { name, value } of attrs) {
+    const k = ismField(name, prefixes)
+    if (k) raw[k] = unescapeXml(value)
+  }
+  for (const { name, inner } of elements) {
+    const k = ismField(name, prefixes)
+    if (!k) continue
+    if (SEQS.includes(k)) seqs[k] = inner
+    else if (!inner.includes('<')) raw[k] = unescapeXml(inner.trim())
+  }
   const fields = {}
   for (const k of TEXTS) if (raw[k] !== undefined) fields[k] = raw[k]
   for (const k of REALS) if (raw[k] !== undefined) fields[k] = Number(raw[k])
   for (const k of INTEGERS) if (raw[k] !== undefined) fields[k] = Number(raw[k])
   for (const k of SEQS) {
-    const seq = new RegExp(`<${p}:${k}>([\\s\\S]*?)</${p}:${k}>`).exec(xmp)
-    if (seq) fields[k] = [...seq[1].matchAll(/<rdf:li>\s*([^<]*?)\s*<\/rdf:li>/g)].map(m => Number(m[1]))
+    if (seqs[k] !== undefined) fields[k] = [...seqs[k].matchAll(/<rdf:li>\s*([^<]*?)\s*<\/rdf:li>/g)].map(m => Number(m[1]))
   }
   return Object.keys(fields).length ? fields : null
 }
@@ -285,20 +344,26 @@ export function mergeIsmIntoXmp(xmp, fields) {
   if (!xmp) return writeIsmXmp(fields)
   if (!/<\/rdf:RDF>/.test(xmp)) throw new Error('The file\'s XMP has no rdf:RDF to add to.')
   let out = xmp
-  const binding = new RegExp(`\\sxmlns:([A-Za-z_][\\w.-]*)\\s*=\\s*["']${ISM_NS.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}["']`).exec(out)
-  if (binding) {
-    const p = binding[1]
+  const prefixes = ismPrefixes(out)
+  if (prefixes.size) {
+    // Only the image's own ISM is replaced; ISM inside an image region belongs
+    // to the region and stays where it is.
+    const { attrs, elements } = topLevelProperties(out)
+    const old = [...attrs, ...elements].filter(x => ismField(x.name, prefixes)).sort((a, b) => b.start - a.start)
+    for (const { start, end } of old) out = out.slice(0, start) + out.slice(end)
+    // A binding goes only when nothing left in the packet uses it.
+    for (const p of prefixes) {
+      const q = p.replace(/[.-]/g, '\\$&')
+      if (!new RegExp(`[<\\s/]${q}:\\w`).test(out)) out = out.replace(new RegExp(`\\sxmlns:${q}\\s*=\\s*("[^"]*"|'[^']*')`, 'g'), '')
+    }
     out = out
-      .replace(new RegExp(`<${p}:(objectBox|referenceExtent)>[\\s\\S]*?</${p}:\\1>`, 'g'), '')
-      .replace(new RegExp(`<${p}:(\\w+)>[^<]*</${p}:\\1>`, 'g'), '')
-      .replace(new RegExp(`\\s${p}:\\w+\\s*=\\s*("[^"]*"|'[^']*')`, 'g'), '')
-      .replace(new RegExp(`\\sxmlns:${p}\\s*=\\s*("[^"]*"|'[^']*')`, 'g'), '')
       // A Description left with nothing but rdf:about goes too.
       .replace(/<rdf:Description\s+rdf:about=(""|'')\s*\/>/g, '')
       .replace(/<rdf:Description\s+rdf:about=(""|'')\s*>\s*<\/rdf:Description>/g, '')
   }
   out = out.replace(/<\/rdf:RDF>/, `  ${ismDescription(fields)}\n  </rdf:RDF>`)
-  return wrapPacket(out)
+  // One packet wrapper: the file's own, if it had one, makes way for ours.
+  return wrapPacket(out.replace(/<\?xpacket[\s\S]*?\?>/g, '').trim())
 }
 
 /**

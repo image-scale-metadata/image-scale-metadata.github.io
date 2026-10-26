@@ -132,16 +132,56 @@ const fields = (w, h, scale, extra = {}) => ({
 const rgb = pattern(W, H, SCALE)
 const small = half(W, H, rgb)
 
+/**
+ * An IPTC Image Region around the drawn bar, carrying ISM of its own: a scale
+ * for the plane the bar lies in, different from the image's. A reader must not
+ * take it for the scale of the whole image.
+ */
+const BAR_REGION = `<rdf:Description rdf:about=""
+        xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/"
+        xmlns:ism="https://w3id.org/ism/0.1/">
+      <Iptc4xmpExt:ImageRegion>
+        <rdf:Bag>
+          <rdf:li rdf:parseType="Resource">
+            <Iptc4xmpExt:RegionBoundary rdf:parseType="Resource">
+              <Iptc4xmpExt:rbShape>rectangle</Iptc4xmpExt:rbShape>
+              <Iptc4xmpExt:rbUnit>pixel</Iptc4xmpExt:rbUnit>
+              <Iptc4xmpExt:rbX>40</Iptc4xmpExt:rbX>
+              <Iptc4xmpExt:rbY>355</Iptc4xmpExt:rbY>
+              <Iptc4xmpExt:rbW>520</Iptc4xmpExt:rbW>
+              <Iptc4xmpExt:rbH>35</Iptc4xmpExt:rbH>
+            </Iptc4xmpExt:RegionBoundary>
+            <Iptc4xmpExt:rId>bar</Iptc4xmpExt:rId>
+            <ism:scale>0.15</ism:scale>
+            <ism:plane>The surface the bar lies on, below the object</ism:plane>
+          </rdf:li>
+        </rdf:Bag>
+      </Iptc4xmpExt:ImageRegion>
+    </rdf:Description>`
+
+/** A packet with the region added beside the image's own ISM, or alone. */
+const withRegion = f => f
+  ? writeIsmXmp(f).replace('</rdf:RDF>', `  ${BAR_REGION}\n  </rdf:RDF>`)
+  : `<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    ${BAR_REGION}
+  </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>`
+
 const files = [
-  ['testfiles/10-png-measured.png', png(W, H, rgb), fields(W, H, SCALE), embedXmpInPng],
-  ['testfiles/11-png-resized-half.png', png(small.w, small.h, small.rgb), fields(W, H, SCALE), embedXmpInPng],
-  ['testfiles/12-tiff-measured.tif', tiff(W, H, rgb), fields(W, H, SCALE), embedXmpInTiff],
-  ['testfiles/13-tiff-resized-half.tif', tiff(small.w, small.h, small.rgb), fields(W, H, SCALE), embedXmpInTiff],
+  ['testfiles/10-png-measured.png', png(W, H, rgb), writeIsmXmp(fields(W, H, SCALE)), embedXmpInPng],
+  ['testfiles/11-png-resized-half.png', png(small.w, small.h, small.rgb), writeIsmXmp(fields(W, H, SCALE)), embedXmpInPng],
+  ['testfiles/12-tiff-measured.tif', tiff(W, H, rgb), writeIsmXmp(fields(W, H, SCALE)), embedXmpInTiff],
+  ['testfiles/13-tiff-resized-half.tif', tiff(small.w, small.h, small.rgb), writeIsmXmp(fields(W, H, SCALE)), embedXmpInTiff],
   ['testfiles/14-png-no-ism.png', png(W, H, rgb), null, null],
+  ['testfiles/15-png-region-with-scale.png', png(W, H, rgb), withRegion(fields(W, H, SCALE)), embedXmpInPng],
+  ['testfiles/16-png-region-only.png', png(W, H, rgb), withRegion(null), embedXmpInPng],
 ]
 
-for (const [path, bytes, f, embed] of files) {
-  const out = f ? embed(bytes, writeIsmXmp(f)) : bytes
+for (const [path, bytes, xmp, embed] of files) {
+  const out = xmp ? embed(bytes, xmp) : bytes
   writeFileSync(path, out)
   console.log(path.padEnd(36), out.length.toString().padStart(8), 'bytes')
 }

@@ -10,6 +10,7 @@ from drifting apart.
 
 import unittest
 from pathlib import Path
+from xml.dom import minidom
 
 import ism
 
@@ -50,6 +51,70 @@ class WrittenAndReadBack(unittest.TestCase):
         fields = ism.parse(packet)
         self.assertEqual(fields["scale"], 0.25)
         self.assertEqual(fields["referenceWidth"], 800)
+
+    RULER_REGION = (
+        '<rdf:Description rdf:about="" '
+        'xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/" xmlns:ism="%s">'
+        '<Iptc4xmpExt:ImageRegion><rdf:Bag><rdf:li rdf:parseType="Resource">'
+        "<Iptc4xmpExt:rId>ruler</Iptc4xmpExt:rId>"
+        "<ism:scale>0.061</ism:scale><ism:plane>table surface</ism:plane>"
+        "<ism:objectBox><rdf:Seq><rdf:li>1</rdf:li><rdf:li>2</rdf:li>"
+        "<rdf:li>3</rdf:li><rdf:li>4</rdf:li></rdf:Seq></ism:objectBox>"
+        "</rdf:li></rdf:Bag></Iptc4xmpExt:ImageRegion></rdf:Description>" % ism.ISM_NS
+    )
+
+    def test_ism_inside_an_image_region_is_not_the_scale_of_the_image(self):
+        fields_in = {k: v for k, v in FULL.items() if k != "objectBox"}
+        packet = ism.write_xmp(dict(fields_in, plane="Upper surface of the find"))
+        packet = packet.replace("</rdf:RDF>", self.RULER_REGION + "</rdf:RDF>")
+        fields = ism.parse(packet)
+        self.assertEqual(fields["scale"], 0.0428)
+        self.assertEqual(fields["plane"], "Upper surface of the find")
+        self.assertNotIn("objectBox", fields)
+
+    def test_a_region_alone_gives_the_image_no_scale(self):
+        packet = ('<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF '
+                  'xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">%s'
+                  "</rdf:RDF></x:xmpmeta>" % self.RULER_REGION)
+        self.assertIsNone(ism.parse(packet))
+
+    def test_merging_replaces_the_images_ism_and_leaves_a_regions_alone(self):
+        # The region shares the image's Description and its binding, the harder case.
+        packet = (
+            '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF '
+            'xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+            '<rdf:Description rdf:about="" '
+            'xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/" xmlns:ism="%s" '
+            'ism:version="0.1" ism:scale="0.5" ism:referenceWidth="10" ism:referenceHeight="10">'
+            "<ism:objectBox><rdf:Seq><rdf:li>1</rdf:li><rdf:li>1</rdf:li>"
+            "<rdf:li>5</rdf:li><rdf:li>5</rdf:li></rdf:Seq></ism:objectBox>"
+            '<Iptc4xmpExt:ImageRegion><rdf:Bag><rdf:li rdf:parseType="Resource">'
+            "<ism:scale>0.061</ism:scale><ism:plane>table surface</ism:plane>"
+            "</rdf:li></rdf:Bag></Iptc4xmpExt:ImageRegion>"
+            "</rdf:Description></rdf:RDF></x:xmpmeta>" % ism.ISM_NS
+        )
+        merged = ism.merge_into_xmp(packet, {"scale": 0.04, "referenceWidth": 100, "referenceHeight": 50})
+        fields = ism.parse(merged)
+        self.assertEqual((fields["scale"], fields["referenceWidth"]), (0.04, 100))
+        self.assertNotIn("objectBox", fields)
+        self.assertIn("<ism:scale>0.061</ism:scale><ism:plane>table surface</ism:plane>", merged)
+        self.assertNotIn('ism:scale="0.5"', merged)
+        minidom.parseString(merged.encode("utf-8"))  # still well-formed: the region kept its binding
+
+    def test_a_merged_packet_has_one_wrapper_whether_the_files_had_one_or_not(self):
+        core = {"referenceWidth": 10, "referenceHeight": 10}
+        wrapped = ism.merge_into_xmp(ism.merge_into_xmp(ism.write_xmp(FULL), dict(core, scale=0.05)),
+                                     dict(core, scale=0.06))
+        bare = ism.merge_into_xmp(
+            '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF '
+            'xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"></rdf:RDF></x:xmpmeta>',
+            dict(core, scale=0.06))
+        for packet in (wrapped, bare):
+            self.assertEqual(packet.count("<?xpacket begin"), 1)
+            self.assertEqual(packet.count("<?xpacket end"), 1)
+            self.assertTrue(packet.startswith("<?xpacket begin="))
+            self.assertTrue(packet.endswith('<?xpacket end="w"?>'))
+            self.assertEqual(ism.parse(packet)["scale"], 0.06)
 
     def test_a_packet_without_the_namespace_has_no_ism(self):
         self.assertIsNone(ism.parse('<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF/></x:xmpmeta>'))
@@ -132,6 +197,8 @@ class AgainstTheOtherImplementation(unittest.TestCase):
         "12-tiff-measured.tif": ((600, 400), 0.1),
         "13-tiff-resized-half.tif": ((300, 200), 0.2),
         "14-png-no-ism.png": ((600, 400), None),
+        "15-png-region-with-scale.png": ((600, 400), 0.1),
+        "16-png-region-only.png": ((600, 400), None),
     }
 
     def test_the_published_answers(self):

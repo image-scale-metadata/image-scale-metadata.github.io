@@ -55,6 +55,8 @@ object block 30 × 20 mm, and a bar exactly 50 mm long. The scale is 0.1 mm per 
 | `12-tiff-measured.tif` | TIFF, tag 700, 600 × 400 | 0.1 mm/px |
 | `13-tiff-resized-half.tif` | TIFF at 300 × 200 | 0.2 mm/px |
 | `14-png-no-ism.png` | The same PNG without ISM | **No scale** |
+| `15-png-region-with-scale.png` | The measured PNG, plus an IPTC Image Region around the bar that carries ISM of its own: 0.15 mm/px for the surface the bar lies on | 0.1 mm/px. The region's scale holds inside the region only; it is not the image's |
+| `16-png-region-only.png` | The same PNG with only that region: the image itself has no ISM | **No scale.** A region's fields do not stand in for the image's |
 
 The bar is the check that needs no software: measure it with the reader's own measuring tool, and
 it must come out at 50 mm in every file that has a scale.

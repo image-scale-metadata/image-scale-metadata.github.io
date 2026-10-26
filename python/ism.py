@@ -159,26 +159,88 @@ def _unescape(text: str) -> str:
     return out.replace("&amp;", "&")
 
 
+#: A tag, a comment, a processing instruction or a CDATA section in an XMP packet.
+_XML_TOKEN = re.compile(
+    r"<!--.*?-->|<\?.*?\?>|<!\[CDATA\[.*?\]\]>"
+    r"|<(/?)([A-Za-z_][\w.:-]*)((?:\s+[^\s=/>]+\s*=\s*(?:\"[^\"]*\"|'[^']*'))*)\s*(/?)>", re.S)
+
+
+def _top_level_properties(xmp: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The properties that belong to the image as a whole.
+
+    The attributes of each rdf:Description directly under rdf:RDF, and the
+    elements directly inside it. A field nested deeper — inside an IPTC Image
+    Region, say — belongs to that structure, not to the image, and is left out.
+    Each property comes back with where it stands in the packet, so a writer
+    can take out exactly these.
+    """
+    attrs: list[dict[str, Any]] = []
+    elements: list[dict[str, Any]] = []
+    stack: list[str] = []
+    open_: tuple[str, int, int, int] | None = None  # the property element being read: name, from, start, depth
+    for m in _XML_TOKEN.finditer(xmp):
+        closing, name, attributes, self_closing = m.groups()
+        if not name:
+            continue
+        if closing:
+            stack.pop()
+            if open_ and len(stack) == open_[3]:
+                elements.append({"name": open_[0], "inner": xmp[open_[1]:m.start()], "start": open_[2], "end": m.end()})
+                open_ = None
+            continue
+        parent = stack[-1] if stack else None
+        if name == "rdf:Description" and parent == "rdf:RDF":
+            at = m.start(3)
+            for a in re.finditer(r"\s+([^\s=]+)\s*=\s*(?:\"([^\"]*)\"|'([^']*)')", attributes):
+                attrs.append({"name": a.group(1), "value": a.group(2) if a.group(2) is not None else a.group(3),
+                              "start": at + a.start(), "end": at + a.end()})
+        elif parent == "rdf:Description" and len(stack) >= 2 and stack[-2] == "rdf:RDF" and not self_closing:
+            open_ = (name, m.end(), m.start(), len(stack))
+        if not self_closing:
+            stack.append(name)
+    return attrs, elements
+
+
+def _ism_prefixes(xmp: str) -> set[str]:
+    """Every prefix a packet binds to the ISM namespace, anywhere in it."""
+    return set(re.findall(r'xmlns:([A-Za-z_][\w.-]*)\s*=\s*["\']%s["\']' % re.escape(ISM_NS), xmp))
+
+
+def _ism_field(name: str, prefixes: set[str]) -> str | None:
+    """The ISM field a qualified name stands for, or None when it is not ISM."""
+    prefix, colon, local = name.partition(":")
+    return local if colon and prefix in prefixes else None
+
+
 def parse(xmp: str | None) -> dict[str, Any] | None:
     """The ISM fields in a packet, typed, or None when it has none.
 
     The prefix is whatever the packet binds to the namespace, not assumed to be
     ``ism``; both XMP forms are read — attributes on rdf:Description and child
-    elements — and objectBox as an rdf:Seq.
+    elements — and objectBox as an rdf:Seq. Only the image's own fields count:
+    ISM written inside another structure, such as an IPTC Image Region, is not
+    read as the scale of the whole image.
     """
     if not xmp:
         return None
-    binding = re.search(r'xmlns:([A-Za-z_][\w.-]*)\s*=\s*["\']%s["\']' % re.escape(ISM_NS), xmp)
-    if not binding:
+    prefixes = _ism_prefixes(xmp)
+    if not prefixes:
         return None
-    p = binding.group(1)
+    attrs, elements = _top_level_properties(xmp)
     raw: dict[str, str] = {}
-    for m in re.finditer(r'\b%s:(\w+)\s*=\s*"([^"]*)"' % p, xmp):
-        raw[m.group(1)] = _unescape(m.group(2))
-    for m in re.finditer(r"\b%s:(\w+)\s*=\s*'([^']*)'" % p, xmp):
-        raw[m.group(1)] = _unescape(m.group(2))
-    for m in re.finditer(r"<%s:(\w+)>([^<]*)</%s:\1>" % (p, p), xmp):
-        raw[m.group(1)] = _unescape(m.group(2).strip())
+    seqs: dict[str, str] = {}
+    for a in attrs:
+        key = _ism_field(a["name"], prefixes)
+        if key:
+            raw[key] = _unescape(a["value"])
+    for e in elements:
+        key = _ism_field(e["name"], prefixes)
+        if not key:
+            continue
+        if key in SEQS:
+            seqs[key] = e["inner"]
+        elif "<" not in e["inner"]:
+            raw[key] = _unescape(e["inner"].strip())
 
     fields: dict[str, Any] = {}
     for key in TEXTS:
@@ -192,9 +254,8 @@ def parse(xmp: str | None) -> dict[str, Any] | None:
             fields[key] = _number(raw[key])
 
     for key in SEQS:
-        seq = re.search(r"<%s:%s>(.*?)</%s:%s>" % (p, key, p, key), xmp, re.S)
-        if seq:
-            fields[key] = [_number(v) for v in re.findall(r"<rdf:li>\s*([^<]*?)\s*</rdf:li>", seq.group(1))]
+        if key in seqs:
+            fields[key] = [_number(v) for v in re.findall(r"<rdf:li>\s*([^<]*?)\s*</rdf:li>", seqs[key])]
     return fields or None
 
 
@@ -387,20 +448,26 @@ def merge_into_xmp(xmp: str | None, fields: dict[str, Any]) -> str:
     if not xmp or "<rdf:RDF" not in xmp:
         return write_xmp(fields)
 
-    binding = re.search(r'xmlns:([A-Za-z_][\w.-]*)\s*=\s*["\']%s["\']' % re.escape(ISM_NS), xmp)
-    if binding:
-        p = binding.group(1)
-        # Drop the old ISM: attributes, child elements, and the objectBox Seq.
-        xmp = re.sub(r"<%s:(objectBox|referenceExtent)>.*?</%s:\1>" % (p, p), "", xmp, flags=re.S)
-        xmp = re.sub(r"<%s:(\w+)>[^<]*</%s:\1>" % (p, p), "", xmp)
-        xmp = re.sub(r'\s*\b%s:(\w+)\s*=\s*"[^"]*"' % p, "", xmp)
-        xmp = re.sub(r"\s*\b%s:(\w+)\s*=\s*'[^']*'" % p, "", xmp)
-        xmp = re.sub(r'\s*xmlns:%s\s*=\s*["\']%s["\']' % (p, re.escape(ISM_NS)), "", xmp)
+    prefixes = _ism_prefixes(xmp)
+    if prefixes:
+        # Drop the image's own old ISM. ISM inside an image region belongs to
+        # the region and stays where it is.
+        attrs, elements = _top_level_properties(xmp)
+        old = sorted((x for x in attrs + elements if _ism_field(x["name"], prefixes)), key=lambda x: -x["start"])
+        for x in old:
+            xmp = xmp[:x["start"]] + xmp[x["end"]:]
+        # A binding goes only when nothing left in the packet uses it.
+        for p in prefixes:
+            q = re.escape(p)
+            if not re.search(r"[<\s/]%s:\w" % q, xmp):
+                xmp = re.sub(r'\s*xmlns:%s\s*=\s*["\']%s["\']' % (q, re.escape(ISM_NS)), "", xmp)
         # An rdf:Description left with nothing but rdf:about goes too.
         xmp = re.sub(r'<rdf:Description\s+rdf:about=""\s*/>', "", xmp)
 
     at = xmp.rindex("</rdf:RDF>")
-    return xmp[:at] + "    " + _description(fields) + "\n  " + xmp[at:]
+    xmp = xmp[:at] + "    " + _description(fields) + "\n  " + xmp[at:]
+    # One packet wrapper: the file's own, if it had one, makes way for ours.
+    return _wrap(re.sub(r"<\?xpacket.*?\?>", "", xmp, flags=re.S).strip())
 
 
 def embed_xmp(data: bytes, xmp: str) -> bytes:
