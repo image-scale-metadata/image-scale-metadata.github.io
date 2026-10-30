@@ -16,7 +16,7 @@ toc: true
 <p class="hero__actions"><a class="button" href="viewer/">Open the viewer</a><a class="button button--quiet" href="validator/">Check a file</a><a class="button button--quiet" href="testfiles/">Test files</a></p>
 <dl class="facts">
 <dt>Status</dt>
-<dd>Draft 0.2 for comment, 22 October 2026. Adds three-dimensional models (§13) and two ways of obtaining a scale, <code>scanner</code> and <code>ct</code> (§4.2). Nothing about images has changed; <a href="0.1/">version 0.1</a> is kept as it was published.</dd>
+<dd>Draft 0.2 for comment, 22 October 2026, with USD and USDZ added on 30 October 2026. Adds three-dimensional models (§13) and two ways of obtaining a scale, <code>scanner</code> and <code>ct</code> (§4.2). Nothing about images has changed; <a href="0.1/">version 0.1</a> is kept as it was published.</dd>
 <dt>Comments</dt>
 <dd>Welcome — open an <a href="https://github.com/image-scale-metadata/image-scale-metadata.github.io/issues">issue</a>.</dd>
 <dt>Editor</dt>
@@ -143,6 +143,7 @@ each format keeps it:
 | **HEIF, AVIF** | An `mime` item of type `application/rdf+xml`, as the format's metadata item. |
 | **PDF** | The document-level metadata stream (`/Metadata`). |
 | **glTF, GLB** | The packet the `asset` points at in the `KHR_xmp_json_ld` extension, written as JSON-LD (§13.2). |
+| **USD, USDZ** | No XMP: the fields in `dictionary ism` in the root layer's `customLayerData` (§13.2). |
 
 A file MUST carry **one** XMP packet in force. A writer that adds ISM to a file that already has
 XMP MUST merge into that packet rather than add a second (§5). A reader MUST take the packet from
@@ -393,9 +394,9 @@ a writer or reader conforms when it passes them.
    `ism:scale` = 0.001 is already 1 µm/px.)
 3. **Several planes**: an object photographed with two scales (top and base)?
 4. **Relation to 3D**: answered in 0.2 — models are described in the same namespace (§13).
-   Still open: carrying ISM in USD and USDZ, which have no place for XMP but do have
-   `metersPerUnit` and `customLayerData`; packets on single nodes, for a model whose parts
-   were measured apart; and skinned or morphing meshes, which 0.2 reads in their rest pose.
+   ISM in USD and USDZ was added on 30 October 2026 (§13.2, §13.3). Still open: instanced prims
+   in USD; packets on single nodes, for a model whose parts were measured apart; and skinned or
+   morphing meshes, which 0.2 reads in their rest pose.
 5. **Name**: "Image Scale Metadata" is a working name. Decide with the partner.
 6. **Where the namespace lives**: settled at w3id.org, which can be pointed at a university
    address later without changing any file.
@@ -449,6 +450,43 @@ speaks for the whole model:
 - In 0.2 a reader reads only the asset's packet. Packets on single nodes are left for a later
   version (§12).
 
+**USD and USDZ.** USD has no XMP. The fields go in the
+root layer's `customLayerData`, as a dictionary named `ism`, which speaks for the whole model:
+
+```
+#usda 1.0
+(
+    customLayerData = {
+        dictionary ism = {
+            string version = "0.2"
+            double scale = 1000
+            double[] referenceExtent = [0.20685434341430664, 0.3197622298785294, 0.037160121484830055]
+            string geometryHash = "e4ddd7bdc5256a92a183b279cf8a42fd8c2d0cbc09e87f870d0a5688cebe1b2b"
+            double metersPerUnit = 1
+            string method = "calipers"
+            string methodNote = "Calipers, 319.76 mm between two points picked on the model"
+            string measuredAt = "2026-10-30"
+        }
+    }
+    metersPerUnit = 1
+)
+```
+
+- Each field keeps its name, without the prefix. Text is a `string`, a number a `double`, and
+  `ism:referenceExtent` a `double[]` of three.
+- `metersPerUnit` in the dictionary records the layer's `metersPerUnit` when the fields were
+  written, so that the unit the extent is in can be read without the stage. It is unset when the
+  layer does not state one.
+- In a USDZ the root layer is the package's first file, as the format has it. A reader MUST take
+  the dictionary from the root layer, not from a layer it sublayers or references.
+- A writer that adds ISM to a layer whose `customLayerData` holds other entries MUST keep them. A
+  writer MAY keep other XMP properties beside `ism` in dictionaries named for their usual prefix
+  (`dc`, `xmpRights`).
+- Text and crate layers carry it alike. A writer that has to convert a crate layer to text to
+  edit it SHOULD convert it back, so the file does not grow.
+- §13.5 applies unchanged. `metersPerUnit` is a format's own unit and not a measurement: a USD
+  file scaled by nothing gets no `dictionary ism`, however its unit is declared (§13.5.4).
+
 **Other formats.** OBJ, PLY, STL and other formats without a place for metadata carry ISM in a
 sidecar (§4.0), in the XMP form of §8, with `ism:referenceExtent` as an `rdf:Seq`.
 
@@ -479,6 +517,27 @@ Whether the size still holds is the extent's question.
 - **The extent:** the width, height and depth of the box around all of them, along x, y and z,
   in the file's units.
 - Skins and morph targets are not applied: the model is read in its rest pose.
+
+**The hash, in USD.** On the stage composed from the root layer:
+1. Every prim of type `Mesh` defined on the stage is taken in the order of a depth-first walk,
+   children in their authored order. Abstract prims (`class`) are left out.
+2. Each gives the default value of its `points` attribute, in element order. Time samples are
+   not read, and a mesh whose `points` has no default value gives nothing.
+3. Each component is written as an IEEE 754 32-bit float, little-endian, and the values are
+   joined end to end.
+4. The SHA-256 of those bytes is the hash.
+
+Transforms are not in the hash, as in glTF. It is worked out from the `points` as authored:
+a library that hands vertices back in an order of its own, or duplicates them per face, does
+not give this hash.
+
+**The extent, in USD.** Every vertex of every `Mesh` of the composed stage at the default
+time, carried through its transforms, into the stage's coordinates; the width, height and depth
+of the box around them, along x, y and z, in the units the layer's `metersPerUnit` declares (the
+fields' own `metersPerUnit` records which). `upAxis` is not applied: a Z-up file's extent is its
+x, y and z as they stand. Skinning is not applied. `extent` attributes in the file are not used.
+Comparison is by §13.4, unchanged, so a file rewritten in another unit or with another up axis
+follows rules 1 to 3.
 
 **In a sidecar's model.** The hash is of the vertex positions in the order the file stores
 them, written the same way: an OBJ's `v` lines, a PLY's vertex x, y and z, each of an STL's
