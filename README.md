@@ -1,7 +1,9 @@
 # Image Scale Metadata (ISM)
 
-**Draft 0.2 — comments welcome.** 0.2 adds three-dimensional models; nothing
-about images has changed since 0.1, which is kept in `0.1/`.
+**Draft 0.3 — comments welcome.** 0.3 adds ISM in IPTC Image Regions, so that
+one picture can carry a scale per plane and a size per object; 0.2 added
+three-dimensional models. Nothing in either changes what a file of 0.1 means.
+The published texts of 0.1 and 0.2 are kept in `0.1/` and `0.2/`.
 
 A small, open format for carrying the true scale of an image inside the image
 file itself: how many millimetres one pixel covers on the object, which pixel
@@ -34,6 +36,25 @@ scales it when the image has the same shape at another size; keeps it when
 the image is turned by 90°; and refuses it otherwise, because the image has
 been cropped or changed.
 
+## Regions
+
+Since 0.3 a part of the picture can carry ISM of its own, in an IPTC Image
+Region (`Iptc4xmpExt:ImageRegion`): a rectangle, a circle or a polygon, with a
+point and a line as polygons. The image's own fields stay where they are, so a
+reader that knows no regions gets the answer it always got.
+
+| In a region | Meaning |
+|---|---|
+| `ism:scale`, `plane`, `method`, `methodNote`, `uncertainty`, `measuredBy`, `measuredAt` | A scale of the region's own, for another plane, and how it was obtained. It holds inside the region and goes before the image's there |
+| `ism:objectWidthMm`, `objectHeightMm`, `objectThicknessMm` | The size of the object in the region |
+| `ism:homography` | For a surface seen at an angle: the 3 × 3 matrix that carries the picture onto its plane in mm, so that lengths along and across the slope both come out right. Written beside `ism:scale`, the scale at its centre |
+| `ism:lengthMm` | On a line, or a marker's first edge: its length on the object, known apart from the scale, so a reader can check the scale |
+
+Each region's scale is its own. Where regions with different scales overlap,
+the inner one holds, and where they only partly overlap none does. Regions are
+written in `relative` units. The grid stays on the image; when only the regions
+have a scale, the image carries the grid alone and has no scale of its own.
+
 ## Models
 
 A three-dimensional model carries the same fields in glTF's `KHR_xmp_json_ld`
@@ -53,12 +74,15 @@ refuse it. The hash says whether the vertices are still the ones measured.
 
 | Path | What |
 |---|---|
-| `js/ism.js` | Reference reader and writer, no dependencies, browser and Node 18+ |
-| `viewer/` | A web page that opens an image, reads its ISM and draws the scale — and, for a JPEG with a ruler in the picture, writes the scale into the file: drag along the ruler, give its length, download. Other metadata in the file is kept. Nothing is uploaded |
+| `js/ism.js` | Reference reader and writer, no dependencies, browser and Node 18+. Reads and writes regions |
+| `python/ism.py` | The same reader and writer for Python, standard library only. Reads regions |
+| `viewer/` | A web page that opens an image, reads its ISM and draws the scale and the regions, measuring by the scale that holds where the line is drawn — and, for a JPEG with a ruler in the picture, writes the scale into the file: drag along the ruler, give its length, download. Other metadata in the file is kept. Nothing is uploaded |
+| `validator/` | A web page that checks a file's ISM and its regions, and gives the level it reaches: A, B, C, and D for regions |
 | `tools/make-testfiles.mjs` | Makes test files (measured, resized, turned, cropped, none) from one measured JPEG (macOS) |
 | `tools/make-model-testfiles.mjs` | Makes the model test files (measured, simplified, turned, in millimetres, cut, none) from nothing |
+| `tools/make-raster-testfiles.mjs` | Makes the PNG and TIFF test files, and the region files, from nothing |
 | `testfiles/` | Test files made from a published find, made images and made models, with the expected result for each |
-| `test/` | Tests: `npm test` |
+| `test/` | Tests: `npm test`, and for Python `python3 -m unittest discover -s python` |
 
 ## Running the viewer
 

@@ -55,11 +55,32 @@ object block 30 × 20 mm, and a bar exactly 50 mm long. The scale is 0.1 mm per 
 | `12-tiff-measured.tif` | TIFF, tag 700, 600 × 400 | 0.1 mm/px |
 | `13-tiff-resized-half.tif` | TIFF at 300 × 200 | 0.2 mm/px |
 | `14-png-no-ism.png` | The same PNG without ISM | **No scale** |
-| `15-png-region-with-scale.png` | The measured PNG, plus an IPTC Image Region around the bar that carries ISM of its own: 0.15 mm/px for the surface the bar lies on | 0.1 mm/px. The region's scale holds inside the region only; it is not the image's |
-| `16-png-region-only.png` | The same PNG with only that region: the image itself has no ISM | **No scale.** A region's fields do not stand in for the image's |
+| `15-png-region-with-scale.png` | The measured PNG, plus an IPTC Image Region around the bar that carries ISM of its own: 0.15 mm/px for the surface the bar lies on | 0.1 mm/px. The region's scale holds inside the region only; it is not the image's. Since 0.3, a reader that knows regions uses 0.15 inside it. The region is in pixels, which 0.3 asks writers not to do (§14.6), and holds only because the file is on the grid it was set on |
+| `16-png-region-only.png` | The same PNG with only that region: the image itself has no ISM | **No scale.** A region's fields do not stand in for the image's, and without the image's grid they cannot be used at all (§14.4) |
 
 The bar is the check that needs no software: measure it with the reader's own measuring tool, and
 it must come out at 50 mm in every file that has a scale.
+
+## Regions (PNG), since 0.3
+
+ISM in IPTC Image Regions (§14). Drawn like the PNG and TIFF set, on a 600 × 400 grid, with every
+length a whole number of pixels and every region corner a round fraction of the picture, so that
+each answer can be worked by hand. Points are given in pixels of the file as stored; on the tilted board, as points of the board in millimetres. Every region
+is in `relative` units except where the file says otherwise.
+
+| File | What it is | The answer |
+|---|---|---|
+| `30-png-two-planes.png` | A stepped object. The image's scale, 0.1 mm/px, is for the upper surface, where a 30 mm bar is 300 px. A polygon around the lower surface, further from the camera, carries its own scale, 0.125 mm/px, and a 24 mm bar lies on it, 192 px. Each bar has a line region with `ism:lengthMm` | 0.1 mm/px for the image. Inside the polygon, 0.125 mm/px: at (450, 200), say. The bar on the lower surface measures 24 mm and the one on the upper 30 mm, and both lines check out against the scale that holds there (§14.3). A line from (100, 100) to (450, 200) has **no length**: its ends lie under different scales (§14.5) |
+| `31-png-two-planes-resized-half.png` | The same picture at 300 × 200, with the same packet | 0.2 mm/px for the image, 0.25 inside the polygon. The lower bar is 96 px and still 24 mm |
+| `32-png-several-objects.png` | Three objects on one board, each a region of its own with its size: a coin (a circle, 18 mm across, the image's own object), a block (a rectangle, 12 × 8 mm) and a shard (a polygon, 12 × 15 mm across its bounds). A rectangle around the 48 mm ruler, and a line along it with its length | 0.1 mm/px. Each object's bounds by the scale come out at its stated size. The coin is marked IPTC *main subject area*, and `ism:objectBox` is its bounds, 210, 60, 180, 180 (§14.9). The ruler's line checks out |
+| `33-png-regions-only-scale.png` | Two surfaces side by side, neither of them the image's: the left at 0.1 mm/px, the right at 0.2. The image has the grid and no scale of its own (§14.4). A 20 mm bar on each, 200 and 100 px | **No scale for the image.** Inside the left region 0.1 mm/px, inside the right 0.2; between them, at x = 300, none. Both bars measure 20 mm. A reader of 0.2 also shows no scale: it finds the core incomplete |
+| `34-png-region-in-pixels-resized-half.png` | File 15 at half size, its region still in pixels | 0.2 mm/px for the image. The region **cannot be placed**: its pixels no longer fit a resized copy (§14.6) |
+| `35-png-two-planes-turned.png` | File 30 turned a quarter turn, 400 × 600, its regions as they were | 0.1 mm/px for the image. The regions **cannot be placed**, since which way the picture was turned cannot be told (§14.6); a reader says that parts of the picture have scales it cannot place |
+| `37-png-tilted-board.png` | A board 80 × 60 mm, tilted away from the camera: its far edge is 300 px wide, its near edge 520 px. Four markers 18 mm square at its corners, ids 12 to 15, each a region with its side as `ism:lengthMm`, and a block 20 × 10 mm measured with calipers. The board's region carries the plane's homography, and `ism:scale` 0.212766 mm/px for its centre, with `ism:uncertainty` 0.232 for how far the scale strays across it. The image has the grid and no scale | **No scale for the image.** On the board, every distance through the homography: 60 mm along it, 50 mm across it, 72.11 mm on the slant (60 by 40), wherever the line is drawn. The stated scale alone would make the 60 mm of the far edge too short and of the near edge too long. Each marker's side checks out at 18 mm, within a pixel, and the block at 20 × 10 mm (§14.7) |
+| `38-png-tilted-board-resized-half.png` | File 37 at 300 × 200, with the same packet | The same lengths. The scale at the board's centre is 0.425532 mm/px |
+| `36-png-two-planes-rewritten-by-exiftool.png` | File 30 after ExifTool 13.55 added a title to it (`exiftool -XMP-dc:Title=Rewritten`): the same packet in ExifTool's own form, with single quotes, its own order, and the image's ISM in a description of its own | The answers of file 30. ExifTool keeps the ISM fields inside the regions when it edits a file |
+
+A reader that knows no regions gives each of these files the image's answer, and never a region's.
 
 ## Models (GLB)
 
@@ -84,11 +105,12 @@ warnings, and the packet is read by glTF-Transform's `KHR_xmp_json_ld` support.
 ## How they are made
 
 `node tools/make-testfiles.mjs <photograph.jpg> <mm-per-px>` makes the JPEG set from a photograph
-of your own; `node tools/make-raster-testfiles.mjs` makes the PNG and TIFF set from nothing at all,
-and `node tools/make-model-testfiles.mjs` the models.
+of your own; `node tools/make-raster-testfiles.mjs` makes the PNG and TIFF set, and the region set
+but file 36, from nothing at all, and `node tools/make-model-testfiles.mjs` the models. File 36 is
+made from file 30 by ExifTool, as its row says.
 Both use the reference writer, so the files and the library cannot drift apart.
 
-The answers above are also the Python library's test suite
+The answers above are also the test suites of both libraries
 (`python3 -m unittest discover -s python`): the files are written by the JavaScript implementation
 and read by the Python one, which is how two implementations of one format are kept honest. Anyone
 implementing ISM is welcome to do the same with theirs.

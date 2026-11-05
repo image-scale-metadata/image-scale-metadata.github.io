@@ -31,6 +31,7 @@ two are kept in step by the test files in testfiles/.
 
 from __future__ import annotations
 
+import math
 import re
 import struct
 import zlib
@@ -42,11 +43,17 @@ __all__ = [
     "write_xmp", "merge_into_xmp", "embed_xmp", "size_of",
     "is_model_fields", "read_gltf", "write_glb", "model_geometry", "asset_packet", "parse_json_ld",
     "model_ism", "model_scale_for", "write_model", "read_model",
+    "ISM_REGION_VERSION", "IPTC_EXT_NS", "REGION_FIELDS", "ISM_ROLES", "ISM_TYPES", "IPTC_ROLES",
+    "grid_for", "parse_regions", "read_regions", "check_region", "region_shape", "shape_bounds", "shape_contains",
+    "region_scales", "scale_at", "measure", "length_check", "object_check", "apply_homography", "shape_within",
+    "main_object_region", "region_box", "has_role", "has_type",
 ]
 
 #: The namespace keeps its address through 0.x: 0.2 only adds (§4).
 ISM_NS = "https://w3id.org/ism/0.1/"
 ISM_VERSION = "0.2"
+#: §14: a file whose regions carry ISM says it follows 0.3. One without regions may still say 0.2.
+ISM_REGION_VERSION = "0.3"
 METHODS = ("ruler", "calipers", "target", "optics", "scanner", "ct", "other")
 
 #: How far two aspect ratios may differ and still count as the same picture (§6.3).
@@ -59,7 +66,7 @@ REALS = ("scale", "uncertainty", "objectWidthMm", "objectHeightMm", "objectThick
 INTEGERS = ("referenceWidth", "referenceHeight")
 TEXTS = ("version", "method", "methodNote", "measuredBy", "measuredAt", "software", "plane", "geometryHash")
 #: The fields written as an rdf:Seq of numbers.
-SEQS = ("objectBox", "referenceExtent")
+SEQS = ("objectBox", "referenceExtent", "homography")
 
 _PNG_XMP_KEYWORD = b"XML:com.adobe.xmp"
 _JPEG_XMP_HEADER = b"http://ns.adobe.com/xap/1.0/\x00"
@@ -279,15 +286,20 @@ def is_model_fields(fields: dict[str, Any] | None) -> bool:
     return bool(fields) and ("referenceExtent" in fields or "geometryHash" in fields)
 
 
-def validate(fields: dict[str, Any] | None) -> list[str]:
-    """Problems with the fields themselves, before any image or model is involved (§4, §6.1, §13.1)."""
+def validate(fields: dict[str, Any] | None, regions: list[dict[str, Any]] | None = None) -> list[str]:
+    """Problems with the fields themselves, before any image or model is involved (§4, §6.1, §13.1).
+
+    With ``regions``, the grid may stand without a scale when a region carries one (§14.4).
+    """
     if not fields:
         return ["No Image Scale Metadata in the file."]
     problems: list[str] = []
     model = is_model_fields(fields)
     if model and ("referenceWidth" in fields or "referenceHeight" in fields):
         problems.append("The fields carry both a pixel grid and a model extent; they describe either an image or a model.")
-    missing = [k for k in (MODEL_CORE if model else CORE) if k not in fields]
+    grid_only = not model and "scale" not in fields and _regions_carry_scale(regions)
+    core = MODEL_CORE if model else tuple(k for k in CORE if k != "scale") if grid_only else CORE
+    missing = [k for k in core if k not in fields]
     if missing:
         problems.append("Missing required field%s: %s." % ("s" if len(missing) > 1 else "", ", ".join(missing)))
     scale = fields.get("scale")
@@ -303,6 +315,10 @@ def validate(fields: dict[str, Any] | None) -> list[str]:
     uncertainty = fields.get("uncertainty")
     if uncertainty is not None and not (_finite(uncertainty) and uncertainty >= 0):
         problems.append("uncertainty must be a number of 0 or more.")
+    if "homography" in fields and not _homography_ok(fields["homography"]):
+        problems.append("homography must hold nine numbers, and not be singular (§14.7).")
+    if "homography" in fields and "scale" not in fields:
+        problems.append("A homography is written with a scale beside it, for readers that know none (§14.7).")
     box = fields.get("objectBox")
     if box is not None and not (len(box) == 4 and all(_finite(n) for n in box)):
         problems.append("objectBox must hold four numbers: x, y, width, height.")
@@ -322,28 +338,46 @@ def _finite(value: Any) -> bool:
 
 # ── The reading rules ────────────────────────────────────────────────────────
 
-def scale_for(fields: dict[str, Any] | None, width: int, height: int) -> tuple[bool, float | None, str | None]:
+def scale_for(fields: dict[str, Any] | None, width: int, height: int,
+              regions: list[dict[str, Any]] | None = None) -> tuple[bool, float | None, str | None]:
     """The scale for the image as it is now (§6).
 
     Returns ``(ok, mm_per_pixel, why_not)``. The scale is refused — rather than
-    guessed — when the picture no longer has the shape it was measured on.
+    guessed — when the picture no longer has the shape it was measured on, and
+    when only its regions carry a scale (§14.4).
     """
-    problems = validate(fields)
+    problems = validate(fields, regions)
     if problems:
         return False, None, " ".join(problems)
     assert fields is not None
     if is_model_fields(fields):
         return False, None, "These fields describe a three-dimensional model, not an image."
-    rw, rh = fields["referenceWidth"], fields["referenceHeight"]
-    if (width, height) == (rw, rh) or (width, height) == (rh, rw):
+    grid = grid_for(fields, width, height)
+    if not grid["ok"]:
+        return False, None, grid["reason"]
+    if "scale" not in fields:
+        return False, None, "The image has no scale of its own: only its regions carry one (§14.4)."
+    if not grid["resized"]:
         return True, fields["scale"], None
-    for w, h in ((width, height), (height, width)):
-        if h and rh and abs(w / h - rw / rh) / (rw / rh) <= ASPECT_TOLERANCE:
-            return True, fields["scale"] * rw / w, None
-    return False, None, (
+    return True, fields["scale"] * fields["referenceWidth"] / (height if grid["turned"] else width), None
+
+
+def grid_for(fields: dict[str, Any] | None, width: int, height: int) -> dict[str, Any]:
+    """How the image as it is now stands to the reference grid (§6.2–6.4), whatever the scale."""
+    rw, rh = (fields or {}).get("referenceWidth"), (fields or {}).get("referenceHeight")
+    if not (isinstance(rw, int) and not isinstance(rw, bool) and rw > 0 and isinstance(rh, int) and not isinstance(rh, bool) and rh > 0):
+        return {"ok": False, "none": True,
+                "reason": "The image has no reference grid: referenceWidth and referenceHeight are missing or not valid."}
+    if (width, height) == (rw, rh):
+        return {"ok": True, "resized": False, "turned": False, "factor": 1}
+    if (width, height) == (rh, rw):
+        return {"ok": True, "resized": False, "turned": True, "factor": 1}
+    for w, h, turned in ((width, height, False), (height, width, True)):
+        if h and abs(w / h - rw / rh) / (rw / rh) <= ASPECT_TOLERANCE:
+            return {"ok": True, "resized": True, "turned": turned, "factor": w / rw}
+    return {"ok": False, "reason": (
         "The image is %d × %d px but the scale was set on %d × %d px, with a different shape. "
-        "It has been cropped or changed since, so the scale no longer applies." % (width, height, rw, rh)
-    )
+        "It has been cropped or changed since, so the scale no longer applies." % (width, height, rw, rh))}
 
 
 def nice_length(scale_mm_per_px: float, target_px: float) -> tuple[float, float]:
@@ -374,6 +408,568 @@ def _trim(value: float) -> str:
     return str(int(value)) if float(value).is_integer() else str(value)
 
 
+# ── Image regions (§14) ──────────────────────────────────────────────────────
+#
+# Read with ElementTree, not with the token scanner the image's own fields use,
+# so that the two implementations of the region rules share no parsing code and
+# a mistake in one shows up as a disagreement with the other.
+
+#: IPTC Photo Metadata's extension schema, where Image Region lives (IPTC 2025.1 §11.20, §12.6–12.8).
+IPTC_EXT_NS = "http://iptc.org/std/Iptc4xmpExt/2008-02-29/"
+_RDF = "{http://www.w3.org/1999/02/22-rdf-syntax-ns#}"
+_XML = "{http://www.w3.org/XML/1998/namespace}"
+_XMP_NS = "http://ns.adobe.com/xap/1.0/"
+_E = "{%s}" % IPTC_EXT_NS
+_ISM = "{%s}" % ISM_NS
+
+#: §14.2: the ISM fields a region may carry. The rest belong to the image as a whole.
+REGION_FIELDS = ("scale", "homography", "plane", "method", "methodNote", "uncertainty", "measuredBy", "measuredAt",
+                 "objectWidthMm", "objectHeightMm", "objectThicknessMm", "lengthMm")
+#: §14.2: the fields that describe a region's own scale, and mean nothing without it.
+REGION_SCALE_FIELDS = ("homography", "plane", "method", "methodNote", "uncertainty", "measuredBy", "measuredAt")
+_REGION_REALS = ("scale", "uncertainty", "objectWidthMm", "objectHeightMm", "objectThicknessMm", "lengthMm")
+REGION_SHAPES = ("rectangle", "circle", "polygon")
+REGION_UNITS = ("pixel", "relative")
+
+#: §14.8: ISM's terms for region roles and content types, until IPTC has its own.
+ISM_ROLES = {"scaleReference": ISM_NS + "role/scaleReference", "measuredObject": ISM_NS + "role/measuredObject"}
+ISM_TYPES = {"ruler": ISM_NS + "type/ruler", "target": ISM_NS + "type/target"}
+IPTC_ROLES = {
+    "mainSubjectArea": "http://cv.iptc.org/newscodes/imageregionrole/mainSubjectArea",
+    "subjectArea": "http://cv.iptc.org/newscodes/imageregionrole/subjectArea",
+    "areaOfInterest": "http://cv.iptc.org/newscodes/imageregionrole/areaOfInterest",
+}
+
+
+def _xml_root(xmp: str):
+    import xml.etree.ElementTree as ET
+    for text in (xmp, *(m.group(0) for m in re.finditer(r"<([\w.-]+:)?xmpmeta\b.*?</\1xmpmeta>", xmp, re.S))):
+        try:
+            return ET.fromstring(text)
+        except ET.ParseError:
+            continue
+    return None
+
+
+def _is_property_attr(key: str) -> bool:
+    return not key.startswith(_RDF) and not key.startswith(_XML)
+
+
+def _rdf_value(el) -> Any:
+    if el.get(_RDF + "parseType") == "Resource":
+        return _rdf_struct(el)
+    resource = el.get(_RDF + "resource")
+    if resource is not None:
+        return resource
+    kids = list(el)
+    if len(kids) == 1 and kids[0].tag in (_RDF + "Bag", _RDF + "Seq", _RDF + "Alt"):
+        items = [li for li in kids[0] if li.tag == _RDF + "li"]
+        if kids[0].tag == _RDF + "Alt":
+            return {"alt": [(li.get(_XML + "lang"), _rdf_value(li)) for li in items]}
+        return [_rdf_value(li) for li in items]
+    if len(kids) == 1 and kids[0].tag == _RDF + "Description":
+        return _rdf_struct(kids[0])
+    if kids or any(_is_property_attr(k) for k in el.attrib):
+        return _rdf_struct(el)
+    return (el.text or "").strip()
+
+
+def _rdf_struct(el) -> dict[str, Any]:
+    out: dict[str, Any] = {k: v for k, v in el.attrib.items() if _is_property_attr(k)}
+    for child in el:
+        out[child.tag] = _rdf_value(child)
+    return out
+
+
+def _text(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and "alt" in value:
+        alts = value["alt"]
+        chosen = next((v for lang, v in alts if lang == "x-default"), alts[0][1] if alts else None)
+        return _text(chosen)
+    if isinstance(value, list) and value:
+        return _text(value[0])
+    return None
+
+
+def _real(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip():
+        return _number(value.strip())
+    return float("nan")
+
+
+def _entities(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    out = []
+    for e in value:
+        if isinstance(e, dict):
+            ident = e.get("{%s}Identifier" % _XMP_NS)
+            ids = ident if isinstance(ident, list) else [] if ident is None else [ident]
+            out.append({"ids": [t for t in map(_text, ids) if t], "name": _text(e.get(_E + "Name"))})
+    return out
+
+
+def _region_from(s: dict[str, Any], index: int) -> dict[str, Any]:
+    b = s.get(_E + "RegionBoundary")
+    b = b if isinstance(b, dict) else {}
+    ism_fields: dict[str, Any] = {}
+    not_allowed: list[str] = []
+    for key, value in s.items():
+        if not key.startswith(_ISM):
+            continue
+        name = key[len(_ISM):]
+        if name not in REGION_FIELDS:
+            not_allowed.append(name)
+        elif name == "homography":
+            ism_fields[name] = [_real(_text(v) if isinstance(v, str) else v) for v in value] if isinstance(value, list) else [float("nan")]
+        elif name in _REGION_REALS:
+            ism_fields[name] = _real(_text(value) if isinstance(value, str) else value)
+        else:
+            ism_fields[name] = _text(value)
+    vertices = b.get(_E + "rbVertices")
+    return {
+        "index": index, "id": _text(s.get(_E + "rId")), "name": _text(s.get(_E + "Name")),
+        "shape": _text(b.get(_E + "rbShape")), "unit": _text(b.get(_E + "rbUnit")),
+        "x": _real(b.get(_E + "rbX")), "y": _real(b.get(_E + "rbY")),
+        "w": _real(b.get(_E + "rbW")), "h": _real(b.get(_E + "rbH")), "rx": _real(b.get(_E + "rbRx")),
+        "vertices": [{"x": _real(p.get(_E + "rbX")) if isinstance(p, dict) else float("nan"),
+                      "y": _real(p.get(_E + "rbY")) if isinstance(p, dict) else float("nan")} for p in vertices]
+        if isinstance(vertices, list) else None,
+        "roles": _entities(s.get(_E + "rRole")), "types": _entities(s.get(_E + "rCtype")),
+        "ism": ism_fields or None, "not_allowed": not_allowed,
+    }
+
+
+def parse_regions(xmp: str | None) -> list[dict[str, Any]]:
+    """The IPTC Image Regions of the image (§14.1), each with the ISM fields it carries.
+
+    Only regions in the image's own Iptc4xmpExt:ImageRegion count: the property
+    of an rdf:Description directly under rdf:RDF.
+    """
+    if not xmp:
+        return []
+    root = _xml_root(xmp)
+    if root is None:
+        return []
+    rdf = root if root.tag == _RDF + "RDF" else root.find(".//" + _RDF + "RDF")
+    if rdf is None:
+        return []
+    out: list[dict[str, Any]] = []
+    for desc in rdf.findall(_RDF + "Description"):
+        bag = _rdf_struct(desc).get(_E + "ImageRegion")
+        if isinstance(bag, list):
+            for r in bag:
+                if isinstance(r, dict):
+                    out.append(_region_from(r, len(out)))
+    return out
+
+
+def read_regions(data: bytes) -> list[dict[str, Any]]:
+    """The image regions in a file's bytes."""
+    return parse_regions(find_xmp(data))
+
+
+def has_role(region: dict[str, Any], uri: str) -> bool:
+    return any(uri in r["ids"] for r in region["roles"])
+
+
+def has_type(region: dict[str, Any], uri: str) -> bool:
+    return any(uri in r["ids"] for r in region["types"])
+
+
+def _scale_ok(value: Any) -> bool:
+    return _finite(value) and value > 0
+
+
+def _regions_carry_scale(regions: Iterable[dict[str, Any]] | None) -> bool:
+    return any(_scale_ok((r.get("ism") or {}).get("scale")) for r in regions or ())
+
+
+def check_region(region: dict[str, Any]) -> dict[str, list[str]]:
+    """What is wrong with a region, apart from any image (§14.2, §14.3, IPTC §12.7).
+
+    ``boundary``: problems that keep it from being placed. ``ism``: problems that
+    keep its ISM fields from being used. ``warnings``: what a writer should not
+    have done, but a reader can live with; the fields named are ignored.
+    """
+    boundary: list[str] = []
+    ism_problems: list[str] = []
+    warnings: list[str] = []
+    shape, unit = region.get("shape"), region.get("unit")
+    rel = unit == "relative"
+
+    def in_range(n: Any) -> bool:
+        return _finite(n) and n >= 0 and (not rel or n <= 1 + 1e-9)
+
+    if shape not in REGION_SHAPES:
+        boundary.append("The region has no boundary shape (rbShape)." if shape is None
+                        else 'The boundary shape "%s" is not one of %s.' % (shape, ", ".join(REGION_SHAPES)))
+    if unit not in REGION_UNITS:
+        boundary.append("The region has no boundary unit (rbUnit)." if unit is None
+                        else 'The boundary unit "%s" is not one of %s.' % (unit, ", ".join(REGION_UNITS)))
+    x, y, w, h, rx, vs = (region.get(k) for k in ("x", "y", "w", "h", "rx", "vertices"))
+    if shape == "rectangle":
+        if not (in_range(x) and in_range(y) and _scale_ok(w) and _scale_ok(h)):
+            boundary.append("A rectangle needs rbX, rbY, rbW and rbH, none negative, and a width and height above 0.")
+        elif rel and (x + w > 1 + 1e-9 or y + h > 1 + 1e-9):
+            boundary.append("The rectangle reaches outside the image.")
+    elif shape == "circle":
+        if not (in_range(x) and in_range(y) and _scale_ok(rx)) or (rel and rx > 1 + 1e-9):
+            boundary.append("A circle needs rbX, rbY and a radius rbRx above 0.")
+    elif shape == "polygon":
+        if not vs:
+            boundary.append("A polygon needs at least one vertex in rbVertices.")
+        elif not all(in_range(p["x"]) and in_range(p["y"]) for p in vs):
+            boundary.append("Every vertex needs rbX and rbY inside the image.")
+    extra = {"rectangle": ("rx", "vertices"), "circle": ("w", "h", "vertices"),
+             "polygon": ("x", "y", "w", "h", "rx")}.get(shape, ())
+    names = {"x": "rbX", "y": "rbY", "w": "rbW", "h": "rbH", "rx": "rbRx", "vertices": "rbVertices"}
+    stray = [names[k] for k in extra if region.get(k) is not None]
+    if stray:
+        warnings.append("A %s does not use %s (IPTC §12.7); ignored." % (shape, ", ".join(stray)))
+
+    not_allowed = region.get("not_allowed") or []
+    if not_allowed:
+        warnings.append("ism:%s belong%s to the image, not to a region (§14.2); ignored."
+                        % (", ism:".join(not_allowed), "" if len(not_allowed) > 1 else "s"))
+    f = region.get("ism")
+    if f:
+        if "scale" in f and not _scale_ok(f["scale"]):
+            ism_problems.append("The region’s scale must be a number above 0.")
+        if "method" in f and f["method"] not in METHODS:
+            ism_problems.append('The region’s method "%s" is not one of %s.' % (f["method"], ", ".join(METHODS)))
+        if "uncertainty" in f and not (_finite(f["uncertainty"]) and f["uncertainty"] >= 0):
+            ism_problems.append("The region’s uncertainty must be a number of 0 or more.")
+        for key in ("objectWidthMm", "objectHeightMm", "objectThicknessMm", "lengthMm"):
+            if key in f and not _scale_ok(f[key]):
+                ism_problems.append("The region’s %s must be a number above 0." % key)
+        if "scale" not in f:
+            loose = [k for k in REGION_SCALE_FIELDS if k in f]
+            if loose:
+                warnings.append("ism:%s describe%s a scale, and the region has none of its own (§14.2); ignored."
+                                % (", ism:".join(loose), "" if len(loose) > 1 else "s"))
+        if "homography" in f and not _homography_ok(f["homography"]):
+            ism_problems.append("The region\u2019s homography must hold nine numbers, and not be singular (§14.7).")
+        if "lengthMm" in f and not (shape == "polygon" and vs and len(vs) >= 2):
+            warnings.append("ism:lengthMm belongs on a line, or on the first edge of a polygon (§14.3); ignored.")
+        if unit == "pixel":
+            warnings.append("A region that carries ISM is written in relative units (§14.6); this one is in pixels, "
+                            "so it holds only on the grid it was set on.")
+    return {"boundary": boundary, "ism": ism_problems, "warnings": warnings}
+
+
+def region_shape(region: dict[str, Any], width: float, height: float) -> dict[str, Any]:
+    """A region's boundary in pixels of a grid ``width`` × ``height``."""
+    sx, sy = (width, height) if region["unit"] == "relative" else (1, 1)
+    if region["shape"] == "rectangle":
+        return {"shape": "rectangle", "x": region["x"] * sx, "y": region["y"] * sy,
+                "w": region["w"] * sx, "h": region["h"] * sy}
+    if region["shape"] == "circle":  # IPTC measures the radius along the x axis (§12.7.7)
+        return {"shape": "circle", "x": region["x"] * sx, "y": region["y"] * sy, "r": region["rx"] * sx}
+    return {"shape": "polygon", "points": [(p["x"] * sx, p["y"] * sy) for p in region["vertices"]]}
+
+
+def shape_bounds(s: dict[str, Any]) -> dict[str, float]:
+    """The box around a shape: x, y, width, height."""
+    if s["shape"] == "rectangle":
+        return {"x": s["x"], "y": s["y"], "w": s["w"], "h": s["h"]}
+    if s["shape"] == "circle":
+        return {"x": s["x"] - s["r"], "y": s["y"] - s["r"], "w": 2 * s["r"], "h": 2 * s["r"]}
+    xs, ys = [p[0] for p in s["points"]], [p[1] for p in s["points"]]
+    return {"x": min(xs), "y": min(ys), "w": max(xs) - min(xs), "h": max(ys) - min(ys)}
+
+
+def shape_contains(s: dict[str, Any], x: float, y: float) -> bool:
+    """Whether a point lies inside a shape, its boundary included. A point or a line has no inside."""
+    e = 1e-9
+    if s["shape"] == "rectangle":
+        return s["x"] - e <= x <= s["x"] + s["w"] + e and s["y"] - e <= y <= s["y"] + s["h"] + e
+    if s["shape"] == "circle":
+        return math.hypot(x - s["x"], y - s["y"]) <= s["r"] + e
+    p = s["points"]
+    if len(p) < 3:
+        return False
+    inside = False
+    j = len(p) - 1
+    for i in range(len(p)):
+        (xi, yi), (xj, yj) = p[i], p[j]
+        cross = (xj - xi) * (y - yi) - (yj - yi) * (x - xi)
+        if (abs(cross) <= e * math.hypot(xj - xi, yj - yi) and min(xi, xj) - e <= x <= max(xi, xj) + e
+                and min(yi, yj) - e <= y <= max(yi, yj) + e):
+            return True
+        if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+            inside = not inside
+        j = i
+    return inside
+
+
+def _shape_points(s: dict[str, Any]) -> list[tuple[float, float]]:
+    if s["shape"] == "rectangle":
+        return [(s["x"], s["y"]), (s["x"] + s["w"], s["y"]), (s["x"] + s["w"], s["y"] + s["h"]), (s["x"], s["y"] + s["h"])]
+    if s["shape"] == "circle":
+        return [(s["x"] - s["r"], s["y"]), (s["x"] + s["r"], s["y"]), (s["x"], s["y"] - s["r"]), (s["x"], s["y"] + s["r"])]
+    return list(s["points"])
+
+
+def _same_scale(a: float, b: float) -> bool:
+    return abs(a - b) <= 1e-9 * max(a, b)
+
+
+def _homography_ok(h: Any) -> bool:
+    """Whether a value is a usable homography: nine finite numbers, not singular (§14.7)."""
+    if not (isinstance(h, (list, tuple)) and len(h) == 9 and all(_finite(n) for n in h)):
+        return False
+    a, b, c, d, e, f, g, i, j = h
+    return abs(a * (e * j - f * i) - b * (d * j - f * g) + c * (d * i - e * g)) > 1e-300
+
+
+def apply_homography(h: list[float], x: float, y: float) -> tuple[float, float]:
+    """A point of the reference grid carried onto the plane, in millimetres (§14.7)."""
+    w = h[6] * x + h[7] * y + h[8]
+    return (h[0] * x + h[1] * y + h[2]) / w, (h[3] * x + h[4] * y + h[5]) / w
+
+
+def region_scales(fields: dict[str, Any] | None, regions: list[dict[str, Any]], width: int, height: int) -> list[dict[str, Any]]:
+    """Every region read against the image as it is now (§14.4–14.6).
+
+    For each: whether it can be placed and where (``shape``, ``bounds``, in
+    pixels of the stored grid), and the scale that holds inside it — its own
+    (``own``), or the image's — in millimetres per current pixel, with the
+    homography that goes with it (§14.7), if any. ``width`` and ``height`` are
+    the stored pixel dimensions, before EXIF orientation.
+    """
+    is_image = bool(fields) and not is_model_fields(fields)
+    grid = grid_for(fields, width, height) if is_image else {
+        "ok": False, "none": True, "reason": "The image has no ISM grid, so no region’s ISM fields can be used (§14.4)."}
+    image = scale_for(fields, width, height, regions)
+    readings: list[dict[str, Any]] = []
+    for region in regions:
+        check = check_region(region)
+        out = {"region": region, "check": check, "placed": False, "own": False, "scale": None, "homography": None,
+               "reason": None, "shape": None, "bounds": None}
+        readings.append(out)
+        if check["boundary"]:
+            out["reason"] = " ".join(check["boundary"])
+            continue
+        unplaced = None
+        if grid["ok"] and grid["turned"]:
+            unplaced = ("The picture has been turned since its regions were set; which way cannot be told, "
+                        "so the regions cannot be placed (§14.6).")
+        elif grid["ok"] and grid["resized"] and region["unit"] == "pixel":
+            unplaced = ("The region is in pixels and the picture has been resized since, "
+                        "so its boundary no longer fits (§14.6).")
+        elif not grid["ok"] and not grid.get("none"):
+            unplaced = grid["reason"]
+        if unplaced:
+            out["reason"] = unplaced
+            continue
+        shape = region_shape(region, width, height)
+        out.update(placed=True, shape=shape, bounds=shape_bounds(shape), factor=grid.get("factor", 1))
+        if not grid["ok"]:
+            out["reason"] = grid["reason"] if region.get("ism") else None
+            continue
+        f = region.get("ism") or {}
+        if _scale_ok(f.get("scale")) and not check["ism"]:
+            out.update(own=True, scale=f["scale"] * fields["referenceWidth"] / width,
+                       homography=f.get("homography"), owner=region)
+        elif check["ism"]:
+            out["reason"] = " ".join(check["ism"])
+    for r in readings:
+        if not r["placed"] or r["own"] or not grid["ok"]:
+            continue
+        at = [_scale_from(readings, image, fields, grid, x, y) for x, y in _shape_points(r["shape"])]
+        bad = next((a for a in at if not a["ok"]), None)
+        if bad:
+            r["reason"] = r["reason"] or bad["reason"]
+        elif any(not _same_source(a, at[0]) for a in at):
+            r["reason"] = r["reason"] or "The region lies under more than one scale (§14.5)."
+        else:
+            r.update(scale=at[0]["scale"], scale_source=at[0]["source"], owner=at[0]["owner"],
+                     homography=at[0]["homography"], uncertainty=at[0]["uncertainty"], plane=at[0]["plane"])
+    return readings
+
+
+def _shape_outline(s: dict[str, Any]) -> list[tuple[float, float]]:
+    """Points along a shape's whole boundary, close enough to tell whether it lies inside another."""
+    if s["shape"] == "circle":
+        return [(s["x"] + s["r"] * math.cos(i * math.pi / 32), s["y"] + s["r"] * math.sin(i * math.pi / 32)) for i in range(64)]
+    p = _shape_points(s)
+    if len(p) < 2:
+        return p
+    out = []
+    for i in range(len(p)):
+        (x0, y0), (x1, y1) = p[i], p[(i + 1) % len(p)]
+        out.extend((x0 + (x1 - x0) * k / 16, y0 + (y1 - y0) * k / 16) for k in range(16))
+    return out
+
+
+def shape_within(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Whether shape a lies wholly inside shape b, its boundary included (§14.5)."""
+    return all(shape_contains(b, x, y) for x, y in _shape_outline(a))
+
+
+def _same_source(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    if a.get("homography") or b.get("homography"):
+        return a.get("owner") is b.get("owner")
+    return _same_scale(a["scale"], b["scale"])
+
+
+def _scale_from(readings, image, fields, grid, x: float, y: float) -> dict[str, Any]:
+    ok, scale, why = image
+    here = [r for r in readings if r["placed"] and r["own"] and shape_contains(r["shape"], x, y)]
+    if not here:
+        if not ok:
+            return {"ok": False, "reason": why}
+        lost = any(not r["placed"] and _scale_ok((r["region"].get("ism") or {}).get("scale"))
+                   and not r["check"]["ism"] and not r["check"]["boundary"] for r in readings)
+        turned = bool(grid and grid.get("turned"))
+        plane = _homography_ok(fields.get("homography"))
+        caveat = ("Parts of the picture have scales of their own that cannot be placed in this copy (§14.6)." if lost
+                  else "The picture has been turned since its plane was set, so the stated scale is used, not the plane (§14.7)."
+                  if plane and turned else None)
+        return {"ok": True, "scale": scale, "source": "image", "owner": "image",
+                "homography": fields["homography"] if plane and not turned else None,
+                "factor": (grid or {}).get("factor", 1), "uncertainty": fields.get("uncertainty"),
+                "plane": fields.get("plane"), "regions": [], "caveat": caveat}
+    chosen = here[0]
+    if any(not _same_source(r, here[0]) for r in here):
+        # The inner one: inside every other, and none of them inside it.
+        chosen = next((r for r in here if all(o is r or (shape_within(r["shape"], o["shape"]) and not shape_within(o["shape"], r["shape"]))
+                                              for o in here)), None)
+        if chosen is None:
+            return {"ok": False, "reason": "Regions with different scales overlap here, and neither lies inside the other, "
+                                           "so no scale holds (§14.5).", "regions": [r["region"] for r in here]}
+    f = chosen["region"]["ism"]
+    return {"ok": True, "scale": chosen["scale"], "source": "region", "owner": chosen["region"],
+            "homography": chosen["homography"], "factor": chosen.get("factor", 1), "uncertainty": f.get("uncertainty"),
+            "plane": f.get("plane"), "regions": [r["region"] for r in here]}
+
+
+def scale_at(fields, regions, width: int, height: int, x: float, y: float) -> dict[str, Any]:
+    """The scale at one point of the image as it is now (§14.5).
+
+    The scale of the regions with a scale of their own that hold the point, or
+    the image's where none does. ``x``, ``y`` are in pixels of the stored grid.
+    Where a homography holds, ``local`` is the scale at that very point.
+    """
+    grid = grid_for(fields, width, height) if fields and not is_model_fields(fields) else None
+    a = _scale_from(region_scales(fields, regions, width, height), scale_for(fields, width, height, regions),
+                    fields, grid, x, y)
+    if a["ok"] and a["homography"]:
+        f, h, e = a["factor"], a["homography"], 0.5
+        x0, y0 = x / f, y / f
+        p, px, py = apply_homography(h, x0, y0), apply_homography(h, x0 + e, y0), apply_homography(h, x0, y0 + e)
+        area = abs((px[0] - p[0]) * (py[1] - p[1]) - (px[1] - p[1]) * (py[0] - p[0])) / (e * e)
+        a["local"] = math.sqrt(area) / f
+    return a
+
+
+def _distance_on_grid(homography, a, b) -> float | None:
+    if not homography:
+        return None
+    pa, pb = apply_homography(homography, *a), apply_homography(homography, *b)
+    return math.hypot(pb[0] - pa[0], pb[1] - pa[1])
+
+
+def measure(fields, regions, width: int, height: int, a: tuple[float, float], b: tuple[float, float]) -> dict[str, Any]:
+    """The distance between two points in millimetres (§14.5); both ends must lie under the same scale.
+
+    Under a homography the distance is worked out on the plane (§14.7).
+    """
+    sa = scale_at(fields, regions, width, height, *a)
+    sb = scale_at(fields, regions, width, height, *b)
+    if not sa["ok"]:
+        return sa
+    if not sb["ok"]:
+        return sb
+    if not _same_source(sa, sb):
+        return {"ok": False, "reason": "The two ends lie under different scales, so the distance between them is not known (§14.5)."}
+    f = sa.get("factor", 1)
+    mm = _distance_on_grid(sa["homography"], (a[0] / f, a[1] / f), (b[0] / f, b[1] / f))
+    if mm is None:
+        mm = math.hypot(b[0] - a[0], b[1] - a[1]) * sa["scale"]
+    return dict(sa, ok=True, mm=mm, caveat=sa.get("caveat") or sb.get("caveat"))
+
+
+def length_check(fields, regions, region) -> dict[str, Any] | None:
+    """A known length checked against the scale in force along it (§14.3), on the reference grid.
+
+    On a line, between its two vertices; on a polygon of more, along its first edge.
+    """
+    length = (region.get("ism") or {}).get("lengthMm")
+    if length is None:
+        return None
+    vs = region.get("vertices")
+    if not (region.get("shape") == "polygon" and vs and len(vs) >= 2):
+        return {"ok": False, "reason": "ism:lengthMm belongs on a line, or on the first edge of a polygon (§14.3)."}
+    rw, rh = (fields or {}).get("referenceWidth"), (fields or {}).get("referenceHeight")
+    grid = grid_for(fields, rw, rh)
+    if not grid["ok"]:
+        return {"ok": False, "reason": grid["reason"]}
+    if not _scale_ok(length):
+        return {"ok": False, "reason": "ism:lengthMm must be a number above 0."}
+    p0, p1 = region_shape(region, rw, rh)["points"][:2]
+    px = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+    if not px > 0:
+        return {"ok": False, "reason": "The line has no length: its two ends are the same point."}
+    own = region["ism"].get("scale")
+    if _scale_ok(own) and not check_region(region)["ism"]:
+        h = region["ism"].get("homography")
+        through = _homography_ok(h)
+        mm = _distance_on_grid(h if through else None, p0, p1) or px * own
+        source, u = "region", region["ism"].get("uncertainty")
+    else:
+        m = measure(fields, regions, rw, rh, p0, p1)
+        if not m["ok"]:
+            return {"ok": False, "lengthMm": length, "px": px, "impliedScale": length / px, "reason": m["reason"]}
+        mm, source, u, through = m["mm"], m["source"], m.get("uncertainty"), bool(m.get("homography"))
+    if through:
+        u = None  # a homography's stated uncertainty is the spread of its scale, not the error of a length
+    difference = length / mm - 1
+    within = "pixel" if through else "uncertainty" if _scale_ok(u) else None
+    agrees = abs(difference) <= 1 / px if within == "pixel" else abs(difference) <= 2 * u if within else None
+    return {"ok": True, "lengthMm": length, "px": px, "impliedScale": length / px, "scale": mm / px, "mm": mm,
+            "source": source, "difference": difference, "uncertainty": u, "within": within, "agrees": agrees}
+
+
+def object_check(fields, regions, region) -> dict[str, Any] | None:
+    """A region's size by the scale in force in it, beside the object dimensions it gives (§14.2, §14.7)."""
+    f = region.get("ism") or {}
+    if "objectWidthMm" not in f and "objectHeightMm" not in f:
+        return None
+    rw, rh = (fields or {}).get("referenceWidth"), (fields or {}).get("referenceHeight")
+    reading = region_scales(fields, regions, rw, rh)[next(i for i, r in enumerate(regions) if r is region)]
+    if not reading["placed"]:
+        return {"ok": False, "reason": reading["reason"] or "The region cannot be placed."}
+    if not reading["scale"]:
+        return {"ok": False, "reason": reading["reason"] or "No scale holds in the region."}
+    if reading["homography"]:
+        on_plane = [apply_homography(reading["homography"], x, y) for x, y in _shape_outline(reading["shape"])]
+        xs, ys = [p[0] for p in on_plane], [p[1] for p in on_plane]
+        width_mm, height_mm = max(xs) - min(xs), max(ys) - min(ys)
+    else:
+        width_mm, height_mm = reading["bounds"]["w"] * reading["scale"], reading["bounds"]["h"] * reading["scale"]
+    return {"ok": True, "scale": reading["scale"], "homography": bool(reading["homography"]), "widthMm": width_mm,
+            "heightMm": height_mm, "objectWidthMm": f.get("objectWidthMm"), "objectHeightMm": f.get("objectHeightMm")}
+
+
+def main_object_region(regions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The region that is the image's own object (§14.9): the one marked IPTC main subject area."""
+    main = [r for r in regions if has_role(r, IPTC_ROLES["mainSubjectArea"])]
+    return main[0] if len(main) == 1 else None
+
+
+def region_box(fields: dict[str, Any], region: dict[str, Any]) -> list[int]:
+    """A region's outer bounds on the reference grid in whole pixels, rounded outwards, as ism:objectBox is written."""
+    b = shape_bounds(region_shape(region, fields["referenceWidth"], fields["referenceHeight"]))
+    x, y = math.floor(b["x"] + 1e-9), math.floor(b["y"] + 1e-9)
+    return [x, y, math.ceil(b["x"] + b["w"] - 1e-9) - x, math.ceil(b["y"] + b["h"] - 1e-9) - y]
+
+
 # ── Writing ──────────────────────────────────────────────────────────────────
 
 _ORDER = ("version", "scale", "referenceWidth", "referenceHeight", "geometryHash", "method", "methodNote",
@@ -388,14 +984,23 @@ def _escape(value: Any) -> str:
             .replace('"', "&quot;").replace("'", "&apos;"))
 
 
-def _description(fields: dict[str, Any]) -> str:
+def _version_before(a: Any, b: Any) -> bool:
+    x, y = ([float(n) for n in str(v).split(".") if n.strip().lstrip("-").isdigit()] for v in (a, b))
+    n = max(len(x), len(y))
+    return (x + [0] * (n - len(x))) < (y + [0] * (n - len(y)))
+
+
+def _description(fields: dict[str, Any], present: list[dict[str, Any]] | None = None) -> str:
     f = {"version": ISM_VERSION, **fields}
-    problems = validate(f)
+    # §14.9: a file whose regions carry ISM says it follows 0.3.
+    if any(r.get("ism") for r in present or ()) and _version_before(f["version"], ISM_REGION_VERSION):
+        f["version"] = ISM_REGION_VERSION
+    problems = validate(f, present)
     if problems:
         raise ValueError(" ".join(problems))
     attrs = "".join('\n        ism:%s="%s"' % (k, _escape(f[k])) for k in _ORDER if k in f)
     inner = ""
-    for key, show in (("referenceExtent", _js_number), ("objectBox", lambda n: "%d" % round(n))):
+    for key, show in (("referenceExtent", _js_number), ("homography", _js_number), ("objectBox", lambda n: "%d" % round(n))):
         if f.get(key):
             items = "".join("<rdf:li>%s</rdf:li>" % show(n) for n in f[key])
             inner += "\n      <ism:%s>\n        <rdf:Seq>%s</rdf:Seq>\n      </ism:%s>" % (key, items, key)
@@ -447,6 +1052,8 @@ def merge_into_xmp(xmp: str | None, fields: dict[str, Any]) -> str:
     """
     if not xmp or "<rdf:RDF" not in xmp:
         return write_xmp(fields)
+    # Regions already in the packet stay as they are, and count for the version and the grid (§14.9).
+    present = parse_regions(xmp)
 
     prefixes = _ism_prefixes(xmp)
     if prefixes:
@@ -465,7 +1072,7 @@ def merge_into_xmp(xmp: str | None, fields: dict[str, Any]) -> str:
         xmp = re.sub(r'<rdf:Description\s+rdf:about=""\s*/>', "", xmp)
 
     at = xmp.rindex("</rdf:RDF>")
-    xmp = xmp[:at] + "    " + _description(fields) + "\n  " + xmp[at:]
+    xmp = xmp[:at] + "    " + _description(fields, present) + "\n  " + xmp[at:]
     # One packet wrapper: the file's own, if it had one, makes way for ours.
     return _wrap(re.sub(r"<\?xpacket.*?\?>", "", xmp, flags=re.S).strip())
 

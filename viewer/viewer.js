@@ -1,10 +1,12 @@
 // ISM viewer: reads the scale from the file itself and draws it on the image,
 // and — for a JPEG — writes it: drag along a ruler in the picture, give its
-// length, and download the picture with the scale in its metadata.
+// length, and download the picture with the scale in its metadata. Draws the
+// image's IPTC regions too, and measures by the scale that holds where the
+// line is drawn (§14).
 // Everything happens in the browser; no file leaves the machine.
 import {
-  METHODS, embedXmp, findXmp, formatMm, jpegHasXmpSegment, jpegOrientation, mergeIsmIntoXmp,
-  niceLength, readIsm, scaleFor,
+  IPTC_ROLES, ISM_ROLES, METHODS, embedXmp, findXmp, formatMm, gridFor, hasRole, jpegHasXmpSegment, jpegOrientation, lengthCheck,
+  measure, mergeIsmIntoXmp, niceLength, readIsm, readRegions, regionScales, scaleFor,
 } from '../js/ism.js'
 
 const stage = document.getElementById('stage')
@@ -38,6 +40,7 @@ stage.addEventListener('drop', e => {
 async function open(file) {
   const bytes = new Uint8Array(await file.arrayBuffer())
   const fields = readIsm(bytes)
+  const regions = readRegions(bytes)
   const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8
   if (objectUrl) URL.revokeObjectURL(objectUrl)
   objectUrl = URL.createObjectURL(file)
@@ -49,13 +52,20 @@ async function open(file) {
   try {
     await img.decode()
   } catch {
-    current = { file, bytes, img: null, fields, isJpeg,
+    current = { file, bytes, img: null, fields, regions, readings: [], isJpeg,
       result: { ok: false, reason: 'This browser cannot display the file. The fields are listed anyway.' } }
     show()
     return
   }
   // naturalWidth/Height come after EXIF orientation, which is what §6.5 expects.
-  current = { file, bytes, img, fields, isJpeg, result: scaleFor(fields, img.naturalWidth, img.naturalHeight) }
+  // Regions and the object box are on the stored grid, before orientation (§14.6).
+  const orientation = isJpeg ? jpegOrientation(bytes) : 1
+  const stored = orientation >= 5 ? { w: img.naturalHeight, h: img.naturalWidth } : { w: img.naturalWidth, h: img.naturalHeight }
+  current = {
+    file, bytes, img, fields, regions, isJpeg, orientation, stored,
+    result: scaleFor(fields, img.naturalWidth, img.naturalHeight, regions),
+    readings: regionScales(fields, regions, stored.w, stored.h),
+  }
   show()
 }
 
@@ -104,6 +114,7 @@ function show() {
       ['Box', fields.objectBox ? fields.objectBox.join(', ') + ' px' : undefined],
     ])
   }
+  regionSection()
   showWriter()
 }
 
@@ -116,12 +127,22 @@ function showStatus() {
       : '<strong>Drag along a known length</strong> — between two marks on a ruler, or along a scale bar. The longer the line, the more exact the scale.'
     return
   }
+  const own = current.readings.filter(r => r.own)
+  if (result.regionsOnly) {
+    statusEl.className = 'status ok'
+    statusEl.innerHTML = `<strong>No scale for the picture as a whole.</strong><br>${own.length === 1 ? '1 region has a scale of its own; it holds only inside it' : `${own.length} regions have scales of their own; each holds only inside its region`}.<br><span class="hint">Drag inside a region to measure.</span>`
+    return
+  }
   statusEl.className = 'status ' + (result.ok ? 'ok' : 'bad')
   if (result.ok) {
     const how = result.resized
       ? `Resized copy (${pct(result.factor)} of the measured image); the scale is adjusted to match.`
       : 'Same pixels as when it was measured.'
-    statusEl.innerHTML = `<strong>${esc(formatMm(result.scale))} per pixel</strong><br>${esc(how)}${result.turned ? ' Turned by 90°; the scale is the same.' : ''}<br><span class="hint">Drag across the image to measure.</span>`
+    const parts = !own.length ? '' : own.length === 1
+      ? '<br>1 region has a scale of its own, for another plane; inside it, that one holds.'
+      : `<br>${own.length} regions have scales of their own, for other planes; inside each, its own holds.`
+    const lost = current.readings.some(r => !r.placed && r.region.ism?.scale) ? '<br>Parts of the picture have scales of their own that cannot be placed in this copy.' : ''
+    statusEl.innerHTML = `<strong>${esc(formatMm(result.scale))} per pixel</strong><br>${esc(how)}${result.turned ? ' Turned by 90°; the scale is the same.' : ''}${parts}${lost}<br><span class="hint">Drag across the image to measure.</span>`
   } else {
     statusEl.textContent = result.reason
   }
@@ -252,20 +273,115 @@ function cancel() {
   showWriter()
 }
 
-// ── The overlay: scale bar, object box, measuring line ─────────────────────────
+// ── Regions (§14) ─────────────────────────────────────────────────────────────
+
+/**
+ * Where a point of the stored grid is shown, and back: the EXIF orientation
+ * turns or mirrors the picture on screen, and the regions with it (§6.5, §14.6).
+ */
+function toShown(x, y) {
+  const { orientation: o = 1, stored: { w: W, h: H } } = current
+  return [[x, y], [W - x, y], [W - x, H - y], [x, H - y], [y, x], [H - y, x], [H - y, W - x], [y, W - x]][o - 1] ?? [x, y]
+}
+function toStored(x, y) {
+  const { orientation: o = 1, stored: { w: W, h: H } } = current
+  return [[x, y], [W - x, y], [W - x, H - y], [x, H - y], [y, x], [y, H - x], [W - y, H - x], [W - y, x]][o - 1] ?? [x, y]
+}
+
+const REGION_COLOURS = { scale: '#b3261e', object: '#0b57d0', reference: '#146c2e', other: '#5f6368' }
+const kindOf = r => r.own ? 'scale' : hasRole(r.region, ISM_ROLES.scaleReference) ? 'reference' : r.region.ism?.objectWidthMm !== undefined || hasRole(r.region, ISM_ROLES.measuredObject) ? 'object' : 'other'
+const nameOf = r => r.name ?? r.id ?? `Region ${r.index + 1}`
+
+function drawRegions(svg, unit) {
+  for (const r of current.readings) {
+    if (!r.placed) continue
+    const colour = REGION_COLOURS[kindOf(r)]
+    const s = r.shape
+    const pts = s.shape === 'rectangle' ? [[s.x, s.y], [s.x + s.w, s.y], [s.x + s.w, s.y + s.h], [s.x, s.y + s.h]]
+      : s.shape === 'polygon' ? s.points : null
+    const style = { fill: r.own ? 'rgba(179,38,30,.08)' : 'none', stroke: colour, 'stroke-width': 1.5 * unit }
+    let anchor
+    if (s.shape === 'circle') {
+      const [cx, cy] = toShown(s.x, s.y)
+      svg.append(el('circle', { cx, cy, r: s.r, ...style }))
+      anchor = [cx, cy - s.r]
+    } else if (pts.length === 1) {
+      const [x, y] = toShown(...pts[0])
+      svg.append(el('path', { d: `M${x - 6 * unit},${y}h${12 * unit}M${x},${y - 6 * unit}v${12 * unit}`, stroke: colour, 'stroke-width': 1.5 * unit }))
+      anchor = [x, y]
+    } else {
+      const shown = pts.map(p => toShown(...p))
+      const d = 'M' + shown.map(p => p.join(',')).join('L') + (pts.length > 2 ? 'Z' : '')
+      svg.append(el('path', { d, ...style, fill: pts.length > 2 ? style.fill : 'none', 'stroke-dasharray': pts.length === 2 ? 'none' : (r.own ? 'none' : `${5 * unit} ${3 * unit}`) }))
+      // The label stands above the middle of the shape.
+      const xs = shown.map(p => p[0])
+      anchor = [(Math.min(...xs) + Math.max(...xs)) / 2, Math.min(...shown.map(p => p[1]))]
+    }
+    const f = r.region.ism ?? {}
+    const words = [nameOf(r.region)]
+    if (r.own) words.push(r.homography ? `plane at an angle, ${formatMm(r.scale)}/px at its centre` : `${formatMm(r.scale)}/px`)
+    if (f.objectWidthMm !== undefined) words.push([f.objectWidthMm, f.objectHeightMm].filter(n => n !== undefined).map(formatMm).join(' × '))
+    // A line's known length, unless its name already says it.
+    if (f.lengthMm !== undefined && f.objectWidthMm === undefined && !words[0].includes(formatMm(f.lengthMm))) words.push(formatMm(f.lengthMm))
+    svg.append(label(anchor[0], anchor[1] - 8 * unit, words.join(' · '), unit * 0.85, 'middle', colour))
+  }
+}
+
+function regionSection() {
+  const { readings, fields, regions } = current
+  if (!readings.length) return
+  const h = document.createElement('h2')
+  h.textContent = `Regions (${readings.length})`
+  const list = document.createElement('dl')
+  list.className = 'regions'
+  for (const r of readings) {
+    const f = r.region.ism ?? {}
+    const lines = []
+    if (r.own) lines.push(`Scale ${formatMm(r.scale)}/px, its own${r.homography ? ', at its centre; measured through the homography of its plane' : ''}${f.plane ? `: ${f.plane}` : ''}`)
+    else if (r.scale) lines.push(`Scale ${formatMm(r.scale)}/px, ${r.scaleSource === 'region' ? 'another region\u2019s' : 'the image\u2019s'}`)
+    if (f.method) lines.push(`Method: ${f.method}${f.uncertainty !== undefined ? `, ± ${pct(2 * f.uncertainty)} at about 95%` : ''}`)
+    if (f.objectWidthMm !== undefined) lines.push(`Object: ${[f.objectWidthMm, f.objectHeightMm].filter(n => n !== undefined).map(formatMm).join(' × ')}${f.objectThicknessMm !== undefined ? `, ${formatMm(f.objectThicknessMm)} thick` : ''}`)
+    const check = lengthCheck(fields, regions, r.region)
+    if (check?.ok) lines.push(check.within === 'pixel'
+      ? `Length ${formatMm(check.lengthMm)}: ${formatMm(check.mm)} through the plane, ${check.agrees ? 'within' : 'more than'} a pixel`
+      : `Length ${formatMm(check.lengthMm)}: gives ${formatMm(check.impliedScale)}/px, ${(check.difference * 100).toFixed(2)}% from the scale there${check.agrees === undefined ? '' : check.agrees ? ', within the uncertainty' : ', more than the uncertainty allows'}`)
+    if (!r.placed || (r.reason && !r.own && !r.scale)) lines.push(r.reason ?? 'Cannot be placed.')
+    for (const w of r.check.warnings) lines.push(w)
+    const dt = document.createElement('dt'); dt.textContent = nameOf(r.region)
+    dt.style.color = REGION_COLOURS[kindOf(r)]
+    const dd = document.createElement('dd'); dd.textContent = lines.join(' · ') || 'An IPTC region, with no ISM fields.'
+    list.append(dt, dd)
+  }
+  details.append(h, list)
+}
+
+// ── The overlay: scale bar, object box, regions, measuring line ───────────────
 
 function overlay(w, h, fields, result) {
   const svg = el('svg', { viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'none' })
   const unit = Math.max(w, h) / 600 // one "screen pixel" at a typical display size
+  // Whether the stored pixels still stand as they were measured: then the box
+  // and the regions can be placed, turned only by the EXIF orientation.
+  const grid = fields ? gridFor(fields, current.stored.w, current.stored.h) : { ok: false }
+
+  drawRegions(svg, unit)
 
   if (result.ok) {
-    // The object box is in the measured image's pixels; follow a resize, not a turn.
-    if (fields.objectBox && !result.turned) {
-      const f = result.resized ? result.factor : 1
-      const [x, y, bw, bh] = fields.objectBox.map(n => n * f)
+    // The object box is in the measured image's stored pixels; follow a resize and the EXIF orientation, not a turn of the pixels.
+    if (fields.objectBox && grid.ok && !grid.turned) {
+      const f = grid.factor
+      const [bx0, by0, bw0, bh0] = fields.objectBox.map(n => n * f)
+      const corners = [toShown(bx0, by0), toShown(bx0 + bw0, by0 + bh0)]
+      const x = Math.min(corners[0][0], corners[1][0]), y = Math.min(corners[0][1], corners[1][1])
+      const bw = Math.abs(corners[1][0] - corners[0][0]), bh = Math.abs(corners[1][1] - corners[0][1])
+      const swapped = current.orientation >= 5
       svg.append(el('rect', { x, y, width: bw, height: bh, fill: 'none', stroke: '#0b57d0', 'stroke-width': 1.5 * unit, 'stroke-dasharray': `${6 * unit} ${4 * unit}` }))
-      if (fields.objectWidthMm) svg.append(label(x + bw / 2, y - 6 * unit, formatMm(fields.objectWidthMm), unit, 'middle'))
-      if (fields.objectHeightMm) svg.append(label(x + bw + 6 * unit, y + bh / 2, formatMm(fields.objectHeightMm), unit, 'start'))
+      const across = swapped ? fields.objectHeightMm : fields.objectWidthMm
+      const down = swapped ? fields.objectWidthMm : fields.objectHeightMm
+      // When the image's object has a region of its own, the region carries the size (§14.9).
+      const labelled = current.readings.some(r => r.placed && hasRole(r.region, IPTC_ROLES.mainSubjectArea))
+      if (across && !labelled) svg.append(label(x + bw / 2, y - 6 * unit, formatMm(across), unit, 'middle'))
+      if (down && !labelled) svg.append(label(x + bw + 6 * unit, y + bh / 2, formatMm(down), unit, 'start'))
     }
     // Scale bar, bottom left, about a fifth of the width.
     const bar = niceLength(result.scale, w / 5)
@@ -312,10 +428,19 @@ function overlay(w, h, fields, result) {
     const px = Math.hypot(x - x0, y - y0)
     text.setAttribute('x', (x0 + x) / 2)
     text.setAttribute('y', (y0 + y) / 2 - 10 * unit)
-    text.textContent = !px ? '' : mode === 'view' && result.ok ? formatMm(px * result.scale) : `${px.toFixed(0)} px`
+    text.textContent = !px ? '' : mode === 'view' ? lengthOf(x0, y0, x, y, px) : `${px.toFixed(0)} px`
   }
   const api = { clearLine: () => { line.setAttribute('visibility', 'hidden'); text.setAttribute('visibility', 'hidden') } }
   return { svg, api }
+}
+
+/** A drawn line's length: by the scale that holds at both ends (§14.5), or why there is none. */
+function lengthOf(x0, y0, x1, y1, px) {
+  const { fields, regions, stored, result } = current
+  if (!regions.length) return result.ok ? formatMm(px * result.scale) : `${px.toFixed(0)} px`
+  const m = measure(fields, regions, stored.w, stored.h, toStored(x0, y0), toStored(x1, y1))
+  if (m.ok) return formatMm(m.mm)
+  return /different scales|overlap/.test(m.reason) ? `${px.toFixed(0)} px — two scales` : `${px.toFixed(0)} px`
 }
 
 function label(x, y, s, unit, anchor, fill = '#0b57d0') {

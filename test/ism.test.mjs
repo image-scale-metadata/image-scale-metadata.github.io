@@ -72,7 +72,8 @@ test('merging replaces the image\'s ISM and leaves a region\'s ISM alone', () =>
       </rdf:li></rdf:Bag></Iptc4xmpExt:ImageRegion>
     </rdf:Description></rdf:RDF></x:xmpmeta>`
   const merged = mergeIsmIntoXmp(xmp, { scale: 0.04, referenceWidth: 100, referenceHeight: 50 })
-  assert.deepEqual(parseIsm(merged), { version: ISM_VERSION, scale: 0.04, referenceWidth: 100, referenceHeight: 50 })
+  // The packet's region carries ISM, so the merged file says it follows 0.3 (§14.9).
+  assert.deepEqual(parseIsm(merged), { version: '0.3', scale: 0.04, referenceWidth: 100, referenceHeight: 50 })
   assert.match(merged, /<ism:scale>0\.061<\/ism:scale><ism:plane>table surface<\/ism:plane>/)
   assert.match(merged, /<rdf:Description rdf:about="" xmlns:Iptc4xmpExt="[^"]+" xmlns:ism="[^"]+">/, 'the region keeps its binding')
   assert.doesNotMatch(merged, /ism:scale="0\.5"|<ism:objectBox>/)

@@ -36,6 +36,11 @@
   .fields dl { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: 0; }
   .fields dt { color: var(--muted); } .fields dd { margin: 0; overflow-wrap: anywhere; font-family: var(--mono); font-size: .75rem; }
   .hint { color: var(--faint); font-size: .75rem; margin-top: .75rem; }
+  .regions table { width: 100%; border-collapse: collapse; font-size: .8125rem; }
+  .regions th { text-align: left; font-weight: 500; color: var(--muted); font-size: .75rem; padding: .4rem .5rem .4rem 0; border-bottom: 1px solid var(--line); }
+  .regions td { vertical-align: top; padding: .5rem .5rem .5rem 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+  .regions td span { display: block; color: var(--faint); font-size: .75rem; }
+  @media (max-width: 560px) { .regions thead { display: none; } .regions tr, .regions td { display: block; } .regions td { border: 0; padding: .15rem 0; } .regions tr { border-bottom: 1px solid var(--line); padding: .5rem 0; } }
 </style>
 </head>
 <body>
@@ -57,7 +62,7 @@
 
 <div class="lede">
   <h1>Validator</h1>
-  <p>Drop an image or a model and see whether it carries Image Scale Metadata, whether the fields are correct, and at which level it conforms — A, B or C. Nothing is uploaded: the file is read in your browser.</p>
+  <p>Drop an image or a model and see whether it carries Image Scale Metadata, whether the fields are correct, and at which level it conforms — A, B or C, and D for a file whose image regions carry ISM. Nothing is uploaded: the file is read in your browser.</p>
 </div>
 
 <main>
@@ -70,7 +75,7 @@
 
 <footer class="colophon">
   <div class="colophon__inner">
-    <span><a href="../">Image Scale Metadata, draft 0.2</a> — the specification. Validator and library under the MIT licence.</span>
+    <span><a href="../">Image Scale Metadata, draft 0.3</a> — the specification. Validator and library under the MIT licence.</span>
     <span>Namespace: <a href="https://w3id.org/ism/">w3id.org/ism</a></span>
   </div>
 </footer>

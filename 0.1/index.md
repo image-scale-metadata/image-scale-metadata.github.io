@@ -5,8 +5,8 @@ permalink: /0.1/
 toc: true
 ---
 
-> **This is version 0.1, kept as it was published.** The current draft is [0.2](../), which adds
-> three-dimensional models and changes nothing about images.
+> **This is version 0.1, kept as it was published.** The current draft is [0.3](../). [Version 0.2](../0.2/)
+> added three-dimensional models, and 0.3 adds ISM in image regions; neither changes what 0.1 says about images.
 
 <div class="hero">
 <p class="hero__eyebrow">Specification · version 0.1 · draft for comment</p>

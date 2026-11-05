@@ -1,0 +1,21 @@
+---
+layout: default
+---
+{% assign address = "https://w3id.org/ism/0.1/" | append: page.kind | append: "/" | append: page.term %}
+<div class="hero">
+<p class="hero__eyebrow">Image Scale Metadata · a region {% if page.kind == "role" %}role, for <code>Iptc4xmpExt:rRole</code>{% else %}content type, for <code>Iptc4xmpExt:rCtype</code>{% endif %} · since 0.3</p>
+<h1>{{ page.label }}</h1>
+<p class="hero__lede">{{ page.meaning }}</p>
+<dl class="facts">
+<dt>Address</dt>
+<dd><code>{{ address }}</code></dd>
+<dt>Written as</dt>
+<dd>The <code>xmp:Identifier</code> of an Entity or Concept in the region's <code>{% if page.kind == "role" %}Iptc4xmpExt:rRole{% else %}Iptc4xmpExt:rCtype{% endif %}</code> (IPTC Photo Metadata §12.6), with <code>Iptc4xmpExt:Name</code> "{{ page.name }}".</dd>
+{% if page.beside %}<dt>Beside</dt>
+<dd>{{ page.beside }}</dd>
+{% endif %}<dt>At IPTC</dt>
+<dd>IPTC's vocabularies have no term for this yet. It is to be proposed for IPTC's NewsCodes; until then ISM's address stands in (<a href="{{ '/#148-roles-and-content-types' | relative_url }}">§14.7</a>).</dd>
+<dt>Defined in</dt>
+<dd><a href="{{ '/#148-roles-and-content-types' | relative_url }}">Image Scale Metadata, §14.8</a>, since version 0.3</dd>
+</dl>
+</div>

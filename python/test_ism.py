@@ -199,6 +199,16 @@ class AgainstTheOtherImplementation(unittest.TestCase):
         "14-png-no-ism.png": ((600, 400), None),
         "15-png-region-with-scale.png": ((600, 400), 0.1),
         "16-png-region-only.png": ((600, 400), None),
+        # §14: what a reader that knows no regions answers for the region files
+        "30-png-two-planes.png": ((600, 400), 0.1),
+        "31-png-two-planes-resized-half.png": ((300, 200), 0.2),
+        "32-png-several-objects.png": ((600, 400), 0.1),
+        "33-png-regions-only-scale.png": ((600, 400), None),
+        "34-png-region-in-pixels-resized-half.png": ((300, 200), 0.2),
+        "35-png-two-planes-turned.png": ((400, 600), 0.1),
+        "36-png-two-planes-rewritten-by-exiftool.png": ((600, 400), 0.1),
+        "37-png-tilted-board.png": ((600, 400), None),
+        "38-png-tilted-board-resized-half.png": ((300, 200), None),
     }
 
     def test_the_published_answers(self):
