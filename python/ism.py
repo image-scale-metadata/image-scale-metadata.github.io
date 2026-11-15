@@ -40,6 +40,7 @@ from typing import Any, Iterable
 __all__ = [
     "ISM_NS", "ISM_VERSION", "METHODS", "ASPECT_TOLERANCE",
     "find_xmp", "parse", "read", "validate", "scale_for", "nice_length", "format_mm",
+    "FINGERPRINT_SCHEME", "FINGERPRINT_MATCH", "fingerprint_of", "fingerprint_match",
     "write_xmp", "merge_into_xmp", "embed_xmp", "size_of",
     "is_model_fields", "read_gltf", "write_glb", "model_geometry", "asset_packet", "parse_json_ld",
     "model_ism", "model_scale_for", "write_model", "read_model",
@@ -64,7 +65,7 @@ CORE = ("scale", "referenceWidth", "referenceHeight", "version")
 MODEL_CORE = ("version", "scale", "referenceExtent", "geometryHash")
 REALS = ("scale", "uncertainty", "objectWidthMm", "objectHeightMm", "objectThicknessMm")
 INTEGERS = ("referenceWidth", "referenceHeight")
-TEXTS = ("version", "method", "methodNote", "measuredBy", "measuredAt", "software", "plane", "geometryHash")
+TEXTS = ("version", "method", "methodNote", "measuredBy", "measuredAt", "software", "plane", "geometryHash", "fingerprint")
 #: The fields written as an rdf:Seq of numbers.
 SEQS = ("objectBox", "referenceExtent", "homography")
 
@@ -271,11 +272,16 @@ def read(data: bytes) -> dict[str, Any] | None:
     return parse(find_xmp(data))
 
 
+#: A number as XMP writes one: decimal digits, a point, an optional exponent.
+#: Python's own float() also takes "1_0", "inf" and "nan"; a reader must not.
+_REAL_TEXT = re.compile(r"[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?")
+
+
 def _number(text: str) -> Any:
-    try:
-        value = float(text)
-    except (TypeError, ValueError):
+    if not isinstance(text, str) or not _REAL_TEXT.fullmatch(text.strip()):
         return float("nan")
+    text = text.strip()
+    value = float(text)
     return int(value) if value.is_integer() and "." not in text and "e" not in text.lower() else value
 
 
@@ -338,8 +344,115 @@ def _finite(value: Any) -> bool:
 
 # ── The reading rules ────────────────────────────────────────────────────────
 
+# ── The fingerprint (§4.5) ───────────────────────────────────────────────────
+
+FINGERPRINT_SCHEME = "y16"
+_FP_CELLS = 16
+_FP_MIN_SIDE = 32
+#: Below this spread of the reference's cells, in levels, a picture is too even to tell a crop by.
+_FP_MIN_SPREAD = 4
+#: The correlation a copy of the same picture reaches, resized and recompressed; a crop of a twentieth falls below it.
+FINGERPRINT_MATCH = 0.995
+
+
+def fingerprint_of(data: bytes, width: int, height: int, channels: int = 4) -> str | None:
+    """The fingerprint of a picture (§4.5): what tells a resized copy from a cropped one.
+
+    The picture is divided into 16 × 16 cells; cell (i, j) holds the columns
+    from ``i*width//16`` up to ``(i+1)*width//16`` and the rows likewise. Each
+    cell's value is its mean luma, 0–255, from the stored 8-bit samples:
+    (299 R + 587 G + 114 B) / 1000, a pixel with alpha first laid over white.
+    The 256 values are written row by row as hexadecimal after ``y16:``.
+
+    ``data`` holds the stored pixels row by row, ``channels`` samples each: 1
+    (grey), 2 (grey, alpha), 3 (RGB) or 4 (RGBA). None for a picture under 32
+    pixels on a side.
+    """
+    if not (isinstance(width, int) and isinstance(height, int) and width >= _FP_MIN_SIDE and height >= _FP_MIN_SIDE):
+        return None
+    if channels not in (1, 2, 3, 4) or data is None or len(data) < width * height * channels:
+        return None
+    n = _FP_CELLS
+    data = bytes(data)
+    xs = [i * width // n for i in range(n + 1)]
+    out = []
+    for j in range(n):
+        y0, y1 = j * height // n, (j + 1) * height // n
+        sums = [0] * n
+        for y in range(y0, y1):
+            row = y * width * channels
+            for i in range(n):
+                a, b = row + xs[i] * channels, row + xs[i + 1] * channels
+                if channels == 1:
+                    sums[i] += 1000 * sum(data[a:b])
+                elif channels == 3:
+                    sums[i] += 299 * sum(data[a:b:3]) + 587 * sum(data[a + 1:b:3]) + 114 * sum(data[a + 2:b:3])
+                else:
+                    for at in range(a, b, channels):
+                        alpha = data[at + channels - 1]
+                        over = [(data[at + k] * alpha + 255 * (255 - alpha) + 127) // 255 for k in range(channels - 1)]
+                        sums[i] += 1000 * over[0] if channels == 2 else 299 * over[0] + 587 * over[1] + 114 * over[2]
+        for i in range(n):
+            den = 1000 * (y1 - y0) * (xs[i + 1] - xs[i])
+            out.append("%02x" % ((2 * sums[i] + den) // (2 * den)))
+    return FINGERPRINT_SCHEME + ":" + "".join(out)
+
+
+def _fingerprint_cells(text: Any) -> list[int] | None:
+    m = re.fullmatch(r"y16:([0-9a-f]{512})", text) if isinstance(text, str) else None
+    return [int(m.group(1)[2 * k:2 * k + 2], 16) for k in range(256)] if m else None
+
+
+def _fingerprint_turned(cells: list[int], turn: int, mirrored: bool) -> list[int]:
+    """The reference's cells as a copy turned clockwise by ``turn`` degrees shows them, mirrored left to right first."""
+    n = _FP_CELLS
+
+    def at(j: int, i: int) -> int:
+        return cells[j * n + (n - 1 - i if mirrored else i)]
+
+    out = []
+    for k in range(n * n):
+        j, i = divmod(k, n)
+        out.append(at(j, i) if turn == 0 else at(n - 1 - i, j) if turn == 90 else at(n - 1 - j, n - 1 - i) if turn == 180 else at(i, n - 1 - j))
+    return out
+
+
+def _correlation(a: list[int], b: list[int]) -> float:
+    ma, mb = sum(a) / len(a), sum(b) / len(b)
+    ab = sum((x - ma) * (y - mb) for x, y in zip(a, b))
+    aa, bb = sum((x - ma) ** 2 for x in a), sum((y - mb) ** 2 for y in b)
+    return ab / math.sqrt(aa * bb) if aa > 0 and bb > 0 else 0.0
+
+
+def fingerprint_match(reference: Any, current: Any, swapped: bool | None = None) -> dict[str, Any]:
+    """A file's fingerprint against the fingerprint of the picture as it is now.
+
+    ``swapped`` says what the dimensions already show: False, the picture
+    stands as the reference grid does; True, width and height are exchanged;
+    None, a square, where every way round is tried. ``checkable`` is False when
+    either fingerprint is missing, of a scheme this reader does not know, or of
+    a picture too even to tell by: the reader then goes on as if there were
+    none. Otherwise ``match`` says whether the picture is the whole of the one
+    the scale was set on, and ``turn`` and ``mirrored`` which way round it stands.
+    """
+    ref, now = _fingerprint_cells(reference), _fingerprint_cells(current)
+    if not ref or not now:
+        return {"checkable": False}
+    mean = sum(ref) / len(ref)
+    if math.sqrt(sum((x - mean) ** 2 for x in ref) / len(ref)) < _FP_MIN_SPREAD:
+        return {"checkable": False, "even": True}
+    turns = (0, 90, 180, 270) if swapped is None else (90, 270) if swapped else (0, 180)
+    best: dict[str, Any] = {"r": -math.inf}
+    for mirrored in (False, True):
+        for turn in turns:
+            r = _correlation(_fingerprint_turned(ref, turn, mirrored), now)
+            if r > best["r"]:
+                best = {"r": r, "turn": turn, "mirrored": mirrored}
+    return {"checkable": True, "match": best["r"] >= FINGERPRINT_MATCH, **best}
+
+
 def scale_for(fields: dict[str, Any] | None, width: int, height: int,
-              regions: list[dict[str, Any]] | None = None) -> tuple[bool, float | None, str | None]:
+              regions: list[dict[str, Any]] | None = None, current: str | None = None) -> tuple[bool, float | None, str | None]:
     """The scale for the image as it is now (§6).
 
     Returns ``(ok, mm_per_pixel, why_not)``. The scale is refused — rather than
@@ -352,7 +465,7 @@ def scale_for(fields: dict[str, Any] | None, width: int, height: int,
     assert fields is not None
     if is_model_fields(fields):
         return False, None, "These fields describe a three-dimensional model, not an image."
-    grid = grid_for(fields, width, height)
+    grid = grid_for(fields, width, height, current)
     if not grid["ok"]:
         return False, None, grid["reason"]
     if "scale" not in fields:
@@ -362,7 +475,7 @@ def scale_for(fields: dict[str, Any] | None, width: int, height: int,
     return True, fields["scale"] * fields["referenceWidth"] / (height if grid["turned"] else width), None
 
 
-def grid_for(fields: dict[str, Any] | None, width: int, height: int) -> dict[str, Any]:
+def grid_for(fields: dict[str, Any] | None, width: int, height: int, current: str | None = None) -> dict[str, Any]:
     """How the image as it is now stands to the reference grid (§6.2–6.4), whatever the scale."""
     rw, rh = (fields or {}).get("referenceWidth"), (fields or {}).get("referenceHeight")
     if not (isinstance(rw, int) and not isinstance(rw, bool) and rw > 0 and isinstance(rh, int) and not isinstance(rh, bool) and rh > 0):
@@ -372,9 +485,25 @@ def grid_for(fields: dict[str, Any] | None, width: int, height: int) -> dict[str
         return {"ok": True, "resized": False, "turned": False, "factor": 1}
     if (width, height) == (rh, rw):
         return {"ok": True, "resized": False, "turned": True, "factor": 1}
+    # The dimensions cannot tell a resized copy from one cropped to the same shape; the fingerprint can (§4.5).
+    square = abs(rw / rh - 1) <= ASPECT_TOLERANCE
+    cropped = False
     for w, h, turned in ((width, height, False), (height, width, True)):
-        if h and abs(w / h - rw / rh) / (rw / rh) <= ASPECT_TOLERANCE:
+        if not h or abs(w / h - rw / rh) / (rw / rh) > ASPECT_TOLERANCE:
+            continue
+        mark = (fingerprint_match(fields.get("fingerprint"), current, None if square else turned)
+                if current and (fields or {}).get("fingerprint") else {"checkable": False})
+        if not mark["checkable"]:
             return {"ok": True, "resized": True, "turned": turned, "factor": w / rw}
+        if mark["match"]:
+            return {"ok": True, "resized": True, "turned": mark["turn"] % 180 != 0 if square else turned, "factor": w / rw,
+                    "checked": True, "turn": mark["turn"], "mirrored": mark["mirrored"]}
+        cropped = True
+    if cropped:
+        return {"ok": False, "cropped": True, "reason": (
+            "The image is %d × %d px and has the shape of the %d × %d px the scale was set on, but it does not show "
+            "the whole of that picture: it has been cropped or changed since, so the scale no longer applies (§4.5)."
+            % (width, height, rw, rh))}
     return {"ok": False, "reason": (
         "The image is %d × %d px but the scale was set on %d × %d px, with a different shape. "
         "It has been cropped or changed since, so the scale no longer applies." % (width, height, rw, rh))}
@@ -733,7 +862,8 @@ def apply_homography(h: list[float], x: float, y: float) -> tuple[float, float]:
     return (h[0] * x + h[1] * y + h[2]) / w, (h[3] * x + h[4] * y + h[5]) / w
 
 
-def region_scales(fields: dict[str, Any] | None, regions: list[dict[str, Any]], width: int, height: int) -> list[dict[str, Any]]:
+def region_scales(fields: dict[str, Any] | None, regions: list[dict[str, Any]], width: int, height: int,
+                  current: str | None = None) -> list[dict[str, Any]]:
     """Every region read against the image as it is now (§14.4–14.6).
 
     For each: whether it can be placed and where (``shape``, ``bounds``, in
@@ -743,9 +873,9 @@ def region_scales(fields: dict[str, Any] | None, regions: list[dict[str, Any]], 
     the stored pixel dimensions, before EXIF orientation.
     """
     is_image = bool(fields) and not is_model_fields(fields)
-    grid = grid_for(fields, width, height) if is_image else {
+    grid = grid_for(fields, width, height, current) if is_image else {
         "ok": False, "none": True, "reason": "The image has no ISM grid, so no region’s ISM fields can be used (§14.4)."}
-    image = scale_for(fields, width, height, regions)
+    image = scale_for(fields, width, height, regions, current)
     readings: list[dict[str, Any]] = []
     for region in regions:
         check = check_region(region)
@@ -849,15 +979,15 @@ def _scale_from(readings, image, fields, grid, x: float, y: float) -> dict[str, 
             "plane": f.get("plane"), "regions": [r["region"] for r in here]}
 
 
-def scale_at(fields, regions, width: int, height: int, x: float, y: float) -> dict[str, Any]:
+def scale_at(fields, regions, width: int, height: int, x: float, y: float, current: str | None = None) -> dict[str, Any]:
     """The scale at one point of the image as it is now (§14.5).
 
     The scale of the regions with a scale of their own that hold the point, or
     the image's where none does. ``x``, ``y`` are in pixels of the stored grid.
     Where a homography holds, ``local`` is the scale at that very point.
     """
-    grid = grid_for(fields, width, height) if fields and not is_model_fields(fields) else None
-    a = _scale_from(region_scales(fields, regions, width, height), scale_for(fields, width, height, regions),
+    grid = grid_for(fields, width, height, current) if fields and not is_model_fields(fields) else None
+    a = _scale_from(region_scales(fields, regions, width, height, current), scale_for(fields, width, height, regions, current),
                     fields, grid, x, y)
     if a["ok"] and a["homography"]:
         f, h, e = a["factor"], a["homography"], 0.5
@@ -875,13 +1005,14 @@ def _distance_on_grid(homography, a, b) -> float | None:
     return math.hypot(pb[0] - pa[0], pb[1] - pa[1])
 
 
-def measure(fields, regions, width: int, height: int, a: tuple[float, float], b: tuple[float, float]) -> dict[str, Any]:
+def measure(fields, regions, width: int, height: int, a: tuple[float, float], b: tuple[float, float],
+            current: str | None = None) -> dict[str, Any]:
     """The distance between two points in millimetres (§14.5); both ends must lie under the same scale.
 
     Under a homography the distance is worked out on the plane (§14.7).
     """
-    sa = scale_at(fields, regions, width, height, *a)
-    sb = scale_at(fields, regions, width, height, *b)
+    sa = scale_at(fields, regions, width, height, *a, current)
+    sb = scale_at(fields, regions, width, height, *b, current)
     if not sa["ok"]:
         return sa
     if not sb["ok"]:
@@ -972,7 +1103,7 @@ def region_box(fields: dict[str, Any], region: dict[str, Any]) -> list[int]:
 
 # ── Writing ──────────────────────────────────────────────────────────────────
 
-_ORDER = ("version", "scale", "referenceWidth", "referenceHeight", "geometryHash", "method", "methodNote",
+_ORDER = ("version", "scale", "referenceWidth", "referenceHeight", "fingerprint", "geometryHash", "method", "methodNote",
           "uncertainty", "measuredBy", "measuredAt", "software", "plane", "objectWidthMm", "objectHeightMm",
           "objectThicknessMm")
 
@@ -994,6 +1125,9 @@ def _description(fields: dict[str, Any], present: list[dict[str, Any]] | None = 
     f = {"version": ISM_VERSION, **fields}
     # §14.9: a file whose regions carry ISM says it follows 0.3.
     if any(r.get("ism") for r in present or ()) and _version_before(f["version"], ISM_REGION_VERSION):
+        f["version"] = ISM_REGION_VERSION
+    # The fingerprint is new in 0.3 too (§4.5).
+    if f.get("fingerprint") is not None and _version_before(f["version"], ISM_REGION_VERSION):
         f["version"] = ISM_REGION_VERSION
     problems = validate(f, present)
     if problems:

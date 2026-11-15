@@ -20,7 +20,7 @@ const CORE = ['version', 'scale', 'referenceWidth', 'referenceHeight']
 const MODEL_CORE = ['version', 'scale', 'referenceExtent', 'geometryHash']
 const REALS = ['scale', 'uncertainty', 'objectWidthMm', 'objectHeightMm', 'objectThicknessMm']
 const INTEGERS = ['referenceWidth', 'referenceHeight']
-const TEXTS = ['version', 'method', 'methodNote', 'measuredBy', 'measuredAt', 'software', 'plane', 'geometryHash']
+const TEXTS = ['version', 'method', 'methodNote', 'measuredBy', 'measuredAt', 'software', 'plane', 'geometryHash', 'fingerprint']
 export const METHODS = ['ruler', 'calipers', 'target', 'optics', 'scanner', 'ct', 'other']
 /** §6.3: a copy with the same aspect ratio, within this, is taken to be resized. */
 export const ASPECT_TOLERANCE = 0.005
@@ -213,10 +213,10 @@ export function parseIsm(xmp) {
   }
   const fields = {}
   for (const k of TEXTS) if (raw[k] !== undefined) fields[k] = raw[k]
-  for (const k of REALS) if (raw[k] !== undefined) fields[k] = Number(raw[k])
-  for (const k of INTEGERS) if (raw[k] !== undefined) fields[k] = Number(raw[k])
+  for (const k of REALS) if (raw[k] !== undefined) fields[k] = realFrom(raw[k])
+  for (const k of INTEGERS) if (raw[k] !== undefined) fields[k] = integerFrom(raw[k])
   for (const k of SEQS) {
-    if (seqs[k] !== undefined) fields[k] = [...seqs[k].matchAll(/<rdf:li>\s*([^<]*?)\s*<\/rdf:li>/g)].map(m => Number(m[1]))
+    if (seqs[k] !== undefined) fields[k] = [...seqs[k].matchAll(/<rdf:li>\s*([^<]*?)\s*<\/rdf:li>/g)].map(m => realFrom(m[1]))
   }
   return Object.keys(fields).length ? fields : null
 }
@@ -260,6 +260,126 @@ export function validate(fields, regions = null) {
 }
 
 /**
+ * The fingerprint of a picture (§4.5): what tells a resized copy from a cropped
+ * one, which the pixel dimensions alone cannot.
+ *
+ * The picture is divided into 16 × 16 cells; cell (i, j) holds the columns from
+ * floor(i·width/16) up to floor((i+1)·width/16) and the rows likewise. Each
+ * cell's value is its mean luma, 0–255, from the stored 8-bit samples:
+ * (299 R + 587 G + 114 B) / 1000, a pixel with alpha first laid over white. The
+ * 256 values are written row by row as hexadecimal after the scheme's name,
+ * `y16:`.
+ *
+ * `data` holds the stored pixels row by row, `channels` samples each: 1 (grey),
+ * 2 (grey, alpha), 3 (RGB) or 4 (RGBA), as a canvas's ImageData is. Null for a
+ * picture under 32 pixels on a side, which is too small to tell anything by.
+ */
+export const FINGERPRINT_SCHEME = 'y16'
+const FP_CELLS = 16
+const FP_MIN_SIDE = 32
+/** Below this spread of the reference's cells, in levels, a picture is too even to tell a crop by. */
+const FP_MIN_SPREAD = 4
+/** The correlation a copy of the same picture reaches, resized and recompressed; a crop of a twentieth falls below it. */
+export const FINGERPRINT_MATCH = 0.995
+
+export function fingerprintOf(data, width, height, channels = 4) {
+  if (!(Number.isInteger(width) && Number.isInteger(height) && width >= FP_MIN_SIDE && height >= FP_MIN_SIDE)) return null
+  if (![1, 2, 3, 4].includes(channels) || !data || data.length < width * height * channels) return null
+  const n = FP_CELLS
+  const column = new Uint8Array(width)
+  for (let i = 0; i < n; i++) for (let x = Math.floor(i * width / n); x < Math.floor((i + 1) * width / n); x++) column[x] = i
+  const over = (c, a) => Math.floor((c * a + 255 * (255 - a) + 127) / 255)
+  let hex = ''
+  for (let j = 0; j < n; j++) {
+    const y0 = Math.floor(j * height / n), y1 = Math.floor((j + 1) * height / n)
+    const sums = new Float64Array(n)
+    for (let y = y0; y < y1; y++) {
+      let at = y * width * channels
+      for (let x = 0; x < width; x++, at += channels) {
+        let luma
+        if (channels === 1) luma = 1000 * data[at]
+        else if (channels === 2) luma = 1000 * over(data[at], data[at + 1])
+        else if (channels === 3) luma = 299 * data[at] + 587 * data[at + 1] + 114 * data[at + 2]
+        else { const a = data[at + 3]; luma = 299 * over(data[at], a) + 587 * over(data[at + 1], a) + 114 * over(data[at + 2], a) }
+        sums[column[x]] += luma
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      const den = 1000 * (y1 - y0) * (Math.floor((i + 1) * width / n) - Math.floor(i * width / n))
+      hex += Math.floor((2 * sums[i] + den) / (2 * den)).toString(16).padStart(2, '0')
+    }
+  }
+  return `${FINGERPRINT_SCHEME}:${hex}`
+}
+
+const fingerprintCells = text => {
+  const m = typeof text === 'string' && /^y16:([0-9a-f]{512})$/.exec(text)
+  return m ? Array.from({ length: 256 }, (_, k) => parseInt(m[1].slice(2 * k, 2 * k + 2), 16)) : null
+}
+
+/** The reference's cells as a copy turned clockwise by `turn` degrees shows them, mirrored left to right first if `mirrored`. */
+const fingerprintTurned = (cells, turn, mirrored) => {
+  const n = FP_CELLS, at = (j, i) => cells[j * n + (mirrored ? n - 1 - i : i)]
+  return Array.from({ length: n * n }, (_, k) => {
+    const j = Math.floor(k / n), i = k % n
+    return turn === 0 ? at(j, i) : turn === 90 ? at(n - 1 - i, j) : turn === 180 ? at(n - 1 - j, n - 1 - i) : at(i, n - 1 - j)
+  })
+}
+
+const correlation = (a, b) => {
+  const mean = v => v.reduce((t, x) => t + x, 0) / v.length
+  const ma = mean(a), mb = mean(b)
+  let ab = 0, aa = 0, bb = 0
+  for (let k = 0; k < a.length; k++) { ab += (a[k] - ma) * (b[k] - mb); aa += (a[k] - ma) ** 2; bb += (b[k] - mb) ** 2 }
+  return aa > 0 && bb > 0 ? ab / Math.sqrt(aa * bb) : 0
+}
+
+/**
+ * A file's fingerprint against the fingerprint of the picture as it is now.
+ *
+ * `swapped` says what the dimensions already show: false, the picture stands
+ * as the reference grid does (so it may be the same way up, upside down or
+ * mirrored); true, width and height are exchanged (a quarter turn either way);
+ * null, a square, where every way round has to be tried.
+ *
+ * `checkable` is false when either fingerprint is missing, of a scheme this
+ * reader does not know, or of a picture too even to tell by: then nothing is
+ * known, and the reader goes on as if there were no fingerprint. Otherwise
+ * `match` says whether the picture is the whole of the one the scale was set
+ * on, and `turn` and `mirrored` which way round it now stands.
+ */
+export function fingerprintMatch(reference, current, swapped = null) {
+  const ref = fingerprintCells(reference), now = fingerprintCells(current)
+  if (!ref || !now) return { checkable: false }
+  const mean = ref.reduce((t, x) => t + x, 0) / ref.length
+  if (Math.sqrt(ref.reduce((t, x) => t + (x - mean) ** 2, 0) / ref.length) < FP_MIN_SPREAD) return { checkable: false, even: true }
+  const turns = swapped === null ? [0, 90, 180, 270] : swapped ? [90, 270] : [0, 180]
+  let best = { r: -Infinity }
+  for (const mirrored of [false, true]) for (const turn of turns) {
+    const r = correlation(fingerprintTurned(ref, turn, mirrored), now)
+    if (r > best.r) best = { r, turn, mirrored }
+  }
+  return { checkable: true, match: best.r >= FINGERPRINT_MATCH, ...best }
+}
+
+/**
+ * A number as XMP writes one: decimal digits, a point for the decimal mark, an
+ * optional exponent. Anything else — `0x1`, `1_0`, `1,5`, `Infinity`, an empty
+ * string — is not a number here, whatever the language's own parser would make
+ * of it, so that every reader refuses the same files.
+ */
+const REAL_TEXT = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/
+const INTEGER_TEXT = /^[+-]?\d+$/
+export function realFrom(value) {
+  if (typeof value === 'number') return value
+  return typeof value === 'string' && REAL_TEXT.test(value.trim()) ? Number(value.trim()) : NaN
+}
+export function integerFrom(value) {
+  if (typeof value === 'number') return value
+  return typeof value === 'string' && INTEGER_TEXT.test(value.trim()) ? Number(value.trim()) : NaN
+}
+
+/**
  * The scale for the image as it is now (§6): millimetres per pixel of the
  * current grid, or the reason there is none.
  *
@@ -268,18 +388,18 @@ export function validate(fields, regions = null) {
  * width and height swapped, and since the scale is the same both ways (§6.5) a
  * swapped grid counts as the same grid.
  */
-export function scaleFor(fields, width, height, regions = null) {
+export function scaleFor(fields, width, height, regions = null, current = null) {
   const problems = validate(fields, regions)
   if (problems.length) return { ok: false, reason: problems.join(' ') }
   if (isModelFields(fields)) return { ok: false, reason: 'These fields describe a three-dimensional model, not an image.' }
-  const grid = gridFor(fields, width, height)
+  const grid = gridFor(fields, width, height, current)
   if (!grid.ok) return grid
   if (fields.scale === undefined) {
     return { ok: false, regionsOnly: true, reason: 'The image has no scale of its own: only its regions carry one (§14.4).' }
   }
   if (!grid.resized) return { ok: true, scale: fields.scale, resized: false, turned: grid.turned }
   const w = grid.turned ? height : width
-  return { ok: true, scale: fields.scale * fields.referenceWidth / w, resized: true, turned: grid.turned, factor: grid.factor }
+  return { ok: true, scale: fields.scale * fields.referenceWidth / w, resized: true, turned: grid.turned, factor: grid.factor, ...(grid.checked ? { checked: true } : {}) }
 }
 
 /**
@@ -287,16 +407,29 @@ export function scaleFor(fields, width, height, regions = null) {
  * the scale: the same grid, turned by a quarter turn, resized by `factor`
  * (current width over reference width), or changed so that nothing applies.
  */
-export function gridFor(fields, width, height) {
+export function gridFor(fields, width, height, current = null) {
   const rw = fields?.referenceWidth, rh = fields?.referenceHeight
   if (!(Number.isInteger(rw) && rw > 0 && Number.isInteger(rh) && rh > 0)) {
     return { ok: false, none: true, reason: 'The image has no reference grid: referenceWidth and referenceHeight are missing or not valid.' }
   }
   if (width === rw && height === rh) return { ok: true, resized: false, turned: false, factor: 1 }
   if (width === rh && height === rw) return { ok: true, resized: false, turned: true, factor: 1 }
-  // Resized? Same aspect ratio, either way round.
+  // Resized? Same aspect ratio, either way round. The dimensions cannot tell a
+  // resized copy from one cropped to the same shape; the fingerprint can (§4.5).
+  const square = Math.abs(rw / rh - 1) <= ASPECT_TOLERANCE
+  let cropped = false
   for (const [w, h, turned] of [[width, height, false], [height, width, true]]) {
-    if (Math.abs(w / h - rw / rh) / (rw / rh) <= ASPECT_TOLERANCE) return { ok: true, resized: true, turned, factor: w / rw }
+    if (Math.abs(w / h - rw / rh) / (rw / rh) > ASPECT_TOLERANCE) continue
+    const print = current && fields.fingerprint ? fingerprintMatch(fields.fingerprint, current, square ? null : turned) : { checkable: false }
+    if (!print.checkable) return { ok: true, resized: true, turned, factor: w / rw }
+    if (print.match) return { ok: true, resized: true, turned: square ? print.turn % 180 !== 0 : turned, factor: w / rw, checked: true, turn: print.turn, mirrored: print.mirrored }
+    cropped = true
+  }
+  if (cropped) {
+    return {
+      ok: false, cropped: true,
+      reason: `The image is ${width} × ${height} px and has the shape of the ${rw} × ${rh} px the scale was set on, but it does not show the whole of that picture: it has been cropped or changed since, so the scale no longer applies (§4.5).`,
+    }
   }
   return {
     ok: false,
@@ -432,7 +565,7 @@ function textOf(v) {
   return undefined
 }
 
-const numberOf = v => (typeof v === 'string' && v.trim() !== '' ? Number(v) : v === undefined ? undefined : NaN)
+const numberOf = v => (v === undefined ? undefined : realFrom(v))
 
 /** IPTC Entity or Concept structures (rRole, rCtype): { ids, name } each. */
 function entitiesOf(v) {
@@ -610,11 +743,11 @@ export function shapeContains(s, x, y) {
  * width and height are the stored pixel dimensions, before EXIF orientation:
  * region boundaries are on the stored grid, as ism:objectBox is (§6.5).
  */
-export function regionScales(fields, regions, width, height) {
+export function regionScales(fields, regions, width, height, current = null) {
   const isImage = !!fields && !isModelFields(fields)
-  const grid = isImage ? gridFor(fields, width, height)
+  const grid = isImage ? gridFor(fields, width, height, current)
     : { ok: false, none: true, reason: 'The image has no ISM grid, so no region’s ISM fields can be used (§14.4).' }
-  const image = scaleFor(fields, width, height, regions)
+  const image = scaleFor(fields, width, height, regions, current)
   const readings = regions.map(region => {
     const check = checkRegion(region)
     const out = { region, check, placed: false, own: false, scale: null, homography: null, reason: null, shape: null, bounds: null }
@@ -729,9 +862,9 @@ export function applyHomography(h, x, y) {
  * Where a homography holds, `local` is the scale at that very point (the
  * square root of the area one pixel covers), and `scale` the stated one.
  */
-export function scaleAt(fields, regions, width, height, x, y) {
-  const grid = fields && !isModelFields(fields) ? gridFor(fields, width, height) : null
-  const a = scaleFrom(regionScales(fields, regions, width, height), scaleFor(fields, width, height, regions), fields, grid, x, y)
+export function scaleAt(fields, regions, width, height, x, y, current = null) {
+  const grid = fields && !isModelFields(fields) ? gridFor(fields, width, height, current) : null
+  const a = scaleFrom(regionScales(fields, regions, width, height, current), scaleFor(fields, width, height, regions, current), fields, grid, x, y)
   if (a.ok && a.homography) {
     const f = a.factor, h = a.homography, e = 0.5
     const [x0, y0] = [x / f, y / f]
@@ -756,9 +889,9 @@ function distanceOnGrid(source, [x0, y0], [x1, y1]) {
  * none: both ends must lie under the same scale. Under a homography the
  * distance is worked out on the plane (§14.7).
  */
-export function measure(fields, regions, width, height, [x0, y0], [x1, y1]) {
-  const a = scaleAt(fields, regions, width, height, x0, y0)
-  const b = scaleAt(fields, regions, width, height, x1, y1)
+export function measure(fields, regions, width, height, [x0, y0], [x1, y1], current = null) {
+  const a = scaleAt(fields, regions, width, height, x0, y0, current)
+  const b = scaleAt(fields, regions, width, height, x1, y1, current)
   if (!a.ok) return a
   if (!b.ok) return b
   if (!sameSource(a, b)) return { ok: false, reason: 'The two ends lie under different scales, so the distance between them is not known (§14.5).' }
@@ -878,7 +1011,7 @@ ${xmpmeta}
 <?xpacket end="w"?>`
 
 /** The order fields are written in, so the same input always gives the same bytes. */
-const ORDER = ['version', 'scale', 'referenceWidth', 'referenceHeight', 'geometryHash', 'method', 'methodNote',
+const ORDER = ['version', 'scale', 'referenceWidth', 'referenceHeight', 'fingerprint', 'geometryHash', 'method', 'methodNote',
   'uncertainty', 'measuredBy', 'measuredAt', 'software', 'plane', 'objectWidthMm', 'objectHeightMm', 'objectThicknessMm']
 
 /** Whether `a` names an earlier version than `b`: "0.2" before "0.3". */
@@ -898,6 +1031,8 @@ function ismDescription(fields, regions = [], present = []) {
   const f = { version: ISM_VERSION, ...fields }
   // §14.9: a file whose regions carry ISM says it follows 0.3.
   if (all.some(r => r.ism && Object.keys(r.ism).length) && versionBefore(f.version, ISM_REGION_VERSION)) f.version = ISM_REGION_VERSION
+  // The fingerprint is new in 0.3 too (§4.5).
+  if (f.fingerprint !== undefined && versionBefore(f.version, ISM_REGION_VERSION)) f.version = ISM_REGION_VERSION
   const problems = validate(f, all)
   if (problems.length) throw new Error(problems.join(' '))
   for (const r of regions) {
@@ -1465,8 +1600,9 @@ export function parseIsmJsonLd(packet) {
   for (const [key, value] of Object.entries(packet)) {
     if (!key.startsWith(p + ':')) continue
     const name = key.slice(p.length + 1)
-    if (SEQS.includes(name)) fields[name] = (value?.['@list'] ?? []).map(Number)
-    else if (REALS.includes(name) || INTEGERS.includes(name)) fields[name] = Number(value)
+    if (SEQS.includes(name)) fields[name] = (value?.['@list'] ?? []).map(realFrom)
+    else if (REALS.includes(name)) fields[name] = realFrom(value)
+    else if (INTEGERS.includes(name)) fields[name] = integerFrom(value)
     else if (TEXTS.includes(name)) fields[name] = String(value)
   }
   return Object.keys(fields).length ? fields : null

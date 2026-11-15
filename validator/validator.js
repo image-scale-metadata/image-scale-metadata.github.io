@@ -5,7 +5,7 @@
 // silently.
 
 import {
-  ISM_NS, ISM_REGION_VERSION, METHODS, findXmp, formatMm, gridFor, isModelFields, lengthCheck, mainObjectRegion,
+  ISM_NS, ISM_REGION_VERSION, METHODS, findXmp, fingerprintOf, formatMm, gridFor, isModelFields, lengthCheck, mainObjectRegion,
   modelGeometry, modelIsm, modelScaleFor, objectCheck, parseIsm, parseRegions, readGltf, regionBox, regionScales, scaleFor,
   validate, IPTC_ROLES, ISM_ROLES, ISM_TYPES,
 } from '../js/ism.js'
@@ -33,7 +33,9 @@ async function check(file) {
   const regions = xmp ? parseRegions(xmp) : []
   const problems = fields ? validate(fields, regions) : []
   const size = sizeFromBytes(bytes) ?? await pixelSize(file)
-  const reading = fields && !problems.length && size ? scaleFor(fields, size.width, size.height, regions) : null
+  // The picture's fingerprint as it is now, when the file carries one to compare with (§4.5).
+  const print = fields?.fingerprint ? await printOf(file) : null
+  const reading = fields && !problems.length && size ? scaleFor(fields, size.width, size.height, regions, print) : null
   const gridOnly = !!fields && fields.scale === undefined && !problems.length
 
   const checks = []
@@ -104,8 +106,11 @@ async function check(file) {
           ? (reading.resized ? `Rescaled from the reference grid by ×${round(reading.factor, 4)} (§6.3).` : 'Straight from the file (§6.2).')
           : reading.reason)
       if (reading.ok && reading.resized) {
-        add('skip', 'A crop to the same shape cannot be told from this',
-          'If the picture was cropped rather than resized, the answer above is wrong. The duty is the writer’s: rewrite the fields or remove them when pixels move (§5.4).')
+        add(reading.checked ? 'pass' : 'skip',
+          reading.checked ? 'The fingerprint matches: a whole copy, resized' : 'Read as a resized copy by assumption',
+          reading.checked ? 'The picture as it is now was compared with ism:fingerprint, so it is not a crop to the same shape (§4.5).'
+            : fields.fingerprint ? 'The file has a fingerprint, but it could not be checked here, so a crop to the same shape would not be noticed (§6.3).'
+              : 'The file has no ism:fingerprint, so a crop to the same shape cannot be told from a resize. If the picture was cropped, the answer above is wrong (§6.3). The duty is the writer’s: rewrite the fields or remove them when pixels move (§5.4).')
       }
     }
   } else {
@@ -379,6 +384,28 @@ function sizeFromBytes(u8) {
     }
   }
   return null
+}
+
+/** The fingerprint of the picture as the browser draws it, from a copy no larger than 1024 pixels (§4.5); null when it cannot be drawn. */
+function printOf(file) {
+  return new Promise(resolve => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      try {
+        const k = Math.min(1, 1024 / Math.max(img.naturalWidth, img.naturalHeight))
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * k))
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * k))
+        const context = canvas.getContext('2d', { willReadFrequently: true })
+        context.drawImage(img, 0, 0, canvas.width, canvas.height)
+        resolve(fingerprintOf(context.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height, 4))
+      } catch { resolve(null) }
+      URL.revokeObjectURL(url)
+    }
+    img.onerror = () => { resolve(null); URL.revokeObjectURL(url) }
+    img.src = url
+  })
 }
 
 function pixelSize(file) {

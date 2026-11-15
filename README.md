@@ -9,11 +9,11 @@ A small, open format for carrying the true scale of an image inside the image
 file itself: how many millimetres one pixel covers on the object, which pixel
 grid that holds for, and how it was measured. Any program can then draw a
 correct scale bar or measure the object — after the file has been copied,
-resized or turned — without a ruler in the frame and without the software that
-made it.
+resized or turned, as long as the software on the way kept the file's XMP —
+without a ruler in the frame and without the software that made it.
 
-The idea is the one medical imaging settled long ago: every X-ray says how big
-a pixel is, so every viewer shows true size.
+The idea is the one medical imaging has in DICOM: an X-ray says how big a
+pixel is, so a viewer can show true size.
 
 ## The fields
 
@@ -81,6 +81,7 @@ refuse it. The hash says whether the vertices are still the ones measured.
 | `tools/make-testfiles.mjs` | Makes test files (measured, resized, turned, cropped, none) from one measured JPEG (macOS) |
 | `tools/make-model-testfiles.mjs` | Makes the model test files (measured, simplified, turned, in millimetres, cut, none) from nothing |
 | `tools/make-raster-testfiles.mjs` | Makes the PNG and TIFF test files, and the region files, from nothing |
+| `tools/make-fingerprint-testfiles.mjs` | Makes the fingerprint test files and `testfiles/fingerprints.json` |
 | `testfiles/` | Test files made from a published find, made images and made models, with the expected result for each |
 | `test/` | Tests: `npm test`, and for Python `python3 -m unittest discover -s python` |
 

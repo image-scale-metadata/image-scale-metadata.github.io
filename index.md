@@ -16,7 +16,7 @@ toc: true
 <p class="hero__actions"><a class="button" href="viewer/">Open the viewer</a><a class="button button--quiet" href="validator/">Check a file</a><a class="button button--quiet" href="testfiles/">Test files</a></p>
 <dl class="facts">
 <dt>Status</dt>
-<dd>Draft 0.3 for comment, 5 November 2026. Adds image regions: ISM fields in IPTC Image Regions, so that one picture can carry a scale of its own for each of several areas, a size for each of several objects, the length of the ruler it was measured from, and the homography of a surface seen at an angle (§14), with two new fields, <code>ism:lengthMm</code> and <code>ism:homography</code>. A reader that knows no regions reads a file of 0.3 as before. <a href="0.2/">Version 0.2</a>, which added three-dimensional models, and <a href="0.1/">version 0.1</a> are kept as they were published.</dd>
+<dd>Draft 0.3 for comment, 5 November 2026. Adds image regions: ISM fields in IPTC Image Regions, so that one picture can carry a scale of its own for each of several areas, a size for each of several objects, the length of the ruler it was measured from, and the homography of a surface seen at an angle (§14), with two new fields, <code>ism:lengthMm</code> and <code>ism:homography</code>. Adds the fingerprint, <code>ism:fingerprint</code>, by which a reader that has the pixels tells a resized copy from a cropped one (§4.5). A reader that knows no regions reads a file of 0.3 as before. <a href="0.2/">Version 0.2</a>, which added three-dimensional models, and <a href="0.1/">version 0.1</a> are kept as they were published.</dd>
 <dt>Comments</dt>
 <dd>Welcome — open an <a href="https://github.com/image-scale-metadata/image-scale-metadata.github.io/issues">issue</a>.</dd>
 <dt>Editor</dt>
@@ -56,8 +56,8 @@ image does — this size was measured, this way, this certainly — together wit
 needs to tell whether the model has been changed since (§13).
 
 ISM does not describe how to photograph an object, nor how to measure one. It only
-describes how the result is carried in the file, so that it survives copying, export and
-import into another system.
+describes how the result is carried in the file, so that it can survive copying, export and
+import into another system, where the software on the way keeps the file's XMP (§4).
 
 ## 2. Scope
 
@@ -124,7 +124,18 @@ import into another system.
 ## 4. The fields
 
 ISM fields live in an XMP namespace of their own, so they travel with JPEG, TIFF, PNG,
-WebP, HEIF, DNG and PDF, and are kept by the tools that keep XMP.
+WebP, HEIF, DNG and PDF.
+
+**What keeps the fields, and what does not.** A program that edits a file in place, or copies
+its XMP packet whole, keeps ISM. A program that builds a new file from the pixels, or copies
+metadata field by field from a list of the fields it knows, drops it. Tried on 15 November 2026:
+macOS `sips` dropped the fields on every operation, resizing and re-encoding among them; ExifTool
+kept them when it edited a file in place and when it copied the packet as a block (`-xmp`), and
+dropped them when it copied tags from one file to another (`-tagsFromFile … -all:all`), since it
+does not know the namespace. Image servers and web publishing systems commonly deliver their
+derivatives with no metadata at all. A file that has lost the fields gives no scale, never a
+wrong one. A scale that is published SHOULD therefore also travel beside the image, in the
+manifest or the record (§7.2, §7.3), and not in the file alone.
 
 - **Namespace URI:** `https://w3id.org/ism/0.1/` — registered at w3id.org; it resolves to this specification.
 - **Preferred prefix:** `ism`
@@ -206,6 +217,73 @@ camera look larger. Writers SHOULD say which plane, and readers SHOULD show it n
 measurement they display. A part at another depth can carry a scale of its own in a region, and
 a plane seen at an angle a homography, on a region or on the image (§14).
 
+**How much depth one scale allows.** Through an ordinary lens, a part that rises `z` above the
+measured plane is drawn larger by `D / (D − z)`, where `D` is the distance from the lens's
+entrance pupil to the plane. A length measured there with the plane's scale comes out too large
+by `z / (D − z)`: 1 % at 6 mm above a plane 600 mm away, 9 % at 50 mm. For a relative error of
+at most `e`, the part may rise no more than `e × D / (1 + e)` above the plane, close to `e × D`.
+A part below the plane is drawn smaller by the same rule. A telecentric lens and a flatbed
+scanner have no such error within their depth of field.
+
+`ism:uncertainty` is the uncertainty of the scale **in the measured plane**. It says nothing
+about a part at another depth, and no field of 0.3 carries `D`. A reader SHOULD NOT show
+`ism:uncertainty` as the uncertainty of a length measured on a part it has reason to think lies
+out of the plane, and a writer that knows the object rises far out of the plane SHOULD say so
+in `ism:plane`.
+
+### 4.5 The fingerprint — recommended
+
+| Field | Type | Meaning |
+|---|---|---|
+| `ism:fingerprint` | Text | **New in 0.3.** What the picture looked like when the scale was set, small enough to compare a later copy against: the scheme's name, a colon, and the scheme's data. 0.3 has one scheme, `y16`. |
+
+The pixel dimensions cannot tell a copy resized to half its size from one cropped to half its
+size in the same shape, nor an upright part cut from a lying picture from the whole picture
+turned and made smaller (§12.1). The first two keep their scale by §6.3 and the others must not.
+The fingerprint is what tells them apart, for a reader that has the pixels.
+
+**The scheme `y16`.**
+
+1. Take the pixels as they are stored, before any EXIF orientation, as 8-bit samples. Samples
+   of 16 bits are read by their high byte. A pixel with alpha is first laid over white, each
+   sample `c` with alpha `a` becoming `floor((c × a + 255 × (255 − a) + 127) / 255)`.
+2. A pixel's luma, times 1000, is `299 R + 587 G + 114 B`; for a grey picture, `1000 ×` its one
+   sample. The samples are taken as they stand, with no colour management.
+3. Divide the picture into 16 × 16 cells. Cell `i` of a row holds the columns from
+   `floor(i × width / 16)` up to, not including, `floor((i + 1) × width / 16)`; the rows of
+   cell `j` likewise, by the height.
+4. A cell's value is its mean luma rounded to the nearest whole number, 0–255:
+   `floor((2 × sum + d) / (2 × d))`, where `sum` is the sum over its pixels of step 2 and `d` is
+   1000 times the number of its pixels.
+5. The field is `y16:` followed by the 256 values, row by row from the top left, each as two
+   lower-case hexadecimal digits: 516 characters.
+
+Every step is in whole numbers, so two implementations give the same characters for the same
+pixels. A picture under 32 pixels on either side has no fingerprint.
+
+**Comparing.** A reader works out the fingerprint of the picture as it is now, the same way, and
+takes the correlation (Pearson's *r*) of its 256 values with the file's. The picture may have been
+turned or mirrored since, so the file's cells are tried each way round that the dimensions allow:
+as they stand and upside down when the picture lies as the reference grid does, the two quarter
+turns when width and height are exchanged, all four for a square; and each of those mirrored.
+The best *r* decides: at **0.995 or more** the picture is the whole of the one the scale was set
+on. The way round that gave it says how the picture has been turned since.
+
+Correlation does not change when a picture is made lighter, darker or more contrasty as a
+whole, so such a copy still matches. It does change when the content moves across the cells,
+which is what a crop does.
+
+**What it can and cannot tell.** Tried on three photographs of objects on 15 November 2026:
+copies resized to between a half and a fifth, and recompressed as JPEG down to quality 30, gave
+*r* of 0.999 or more; copies cropped by a twentieth of their width and height gave 0.987 to
+0.991, and by a tenth 0.94 to 0.96. Crops by a fiftieth gave 0.998 and passed: a crop that small
+is not caught, and the scale read from it is wrong by as much as was cut. Three photographs
+are little to set a threshold by, and it will be tried on more before 1.0. A picture whose cells
+hardly differ — a standard deviation under 4 levels in the file's fingerprint, a blank sheet —
+cannot be checked at all, and is read as if it had no fingerprint.
+
+A reader ignores a fingerprint whose scheme it does not know.
+
 ## 5. Rules for writers
 
 1. A writer MUST write the four core fields together, or none of them. The one exception is an
@@ -218,7 +296,7 @@ a plane seen at an angle a homography, on a region or on the image (§14).
 4. When a writer **crops, rotates by other than 90°, corrects perspective or otherwise
    moves pixels**, it MUST recompute the fields for the new grid or remove all of them. A
    crop keeps the size of a pixel but changes the grid, and a reader cannot tell a crop
-   from a resize by the dimensions alone.
+   from a resize by the dimensions alone. `ism:fingerprint` is recomputed or removed with them.
 5. A writer SHOULD also set the file's resolution to match (§7.1), so that software that
    does not know ISM still gets the right answer where it can.
 6. A writer MUST NOT write ISM for an image whose scale it has not measured. An estimate
@@ -226,16 +304,32 @@ a plane seen at an angle a homography, on a region or on the image (§14).
 7. A writer MAY leave a file it passes on unchanged — an original kept byte for byte —
    without ISM, and write the fields only into the copies it makes. `ism:uncertainty` is
    left out when there is no real figure for it; a guessed one is worse than none.
+8. A writer SHOULD write `ism:fingerprint` (§4.5). It MUST be the fingerprint of the pixels of
+   the reference grid: of the file the fields are written into, at the moment they are written.
+   A writer that resizes and leaves the fields unchanged (rule 3) leaves the fingerprint
+   unchanged too; one that rewrites the fields to a new grid writes the new picture's.
 
 ## 6. Rules for readers
 
 1. A reader MUST check that all four core fields are present and valid before using the
    scale. An image whose regions carry the scale has the grid alone, and no scale of its own
    (§14.4).
-2. If the current grid equals the reference grid, the scale is `ism:scale`.
-3. If the current grid differs but has the same aspect ratio (within 0.5 %), the reader
-   MUST assume a uniform resize and use
-   `scale_current = ism:scale × referenceWidth / currentWidth`.
+2. If the current grid equals the reference grid, the scale is `ism:scale`. So it is when the
+   current grid is the reference grid with width and height exchanged: the pixels were turned by
+   a quarter turn, or are shown through an EXIF orientation (rule 5), and turning does not
+   change the size of a pixel.
+3. If the current grid differs but has the same aspect ratio (within 0.5 %), as it stands or
+   with width and height exchanged, the picture is either a uniform resize of the reference
+   grid or a crop of it to the same shape.
+   - When the file has `ism:fingerprint` and the reader has the pixels, the reader MUST compare
+     (§4.5). If the picture matches, it is a resize, and the scale is
+     `scale_current = ism:scale × referenceWidth / currentWidth` (the current height, where
+     width and height are exchanged). If it does not match, the reader MUST NOT show a scale,
+     and SHOULD say that the picture has been cropped or changed.
+   - When there is no fingerprint, or none the reader can check, the reader assumes a uniform
+     resize and uses the same formula. It SHOULD then say that the scale rests on that
+     assumption. A reader that has the pixels SHOULD check; one that reads only the metadata
+     cannot.
 4. If the aspect ratio differs, the image was cropped or otherwise changed without the
    fields being updated. The reader MUST NOT show a scale, and SHOULD say why.
 5. EXIF orientation: the scale is the same in both directions, so orientation does not
@@ -277,8 +371,12 @@ Dimensions service carries the same number:
 ```
 
 `physicalScale` is `ism:scale` rescaled to the canvas's width by §6.3. IIIF itself notes
-that physical dimensions are often missing or unreliable; ISM's method and uncertainty are
-what make the number trustworthy.
+that physical dimensions are often missing or unreliable, and records that a label for how far
+to trust them was proposed and deferred; ISM's method and uncertainty are that label.
+
+The draft of Presentation 4.0 (version 4.0.0, not yet stable in November 2026) has
+`spatialScale` on a Canvas: a Quantity in metres for one canvas unit. That is `ism:scale` ÷ 1000,
+rescaled to the canvas's width the same way.
 
 ### 7.3 Linked Art and museum records
 
@@ -299,26 +397,47 @@ ISM does not replace a museum's own recorded dimensions; it says how large the o
 
 ### 7.4 Prior art worth naming
 
-- **DICOM**: the medical model, where every viewer shows a true scale because the file
-  says how large a pixel is. ISM is that idea for heritage images, and the parallel runs
-  deeper than the one field usually cited:
+- **DICOM**: the medical model, where the file says how large a pixel is, so that a viewer can
+  show a true scale. ISM is that idea for heritage images. DICOM is also the warning: NEMA
+  CP-586 was written because viewers read the spacing attributes differently, often without
+  telling the user. The parallel runs deeper than the one field usually cited:
   - `ImagerPixelSpacing` (0018,1164) is the distance between pixel centres **on the
     detector**; `PixelSpacing` (0028,0030) is the distance **in the patient**. The
-    standard states that the first "shall never be adjusted to account for calibration
-    against an object of known size" — that is what the second exists for. This is §5.2
+    standard states that the first "shall never be adjusted to account for correction for
+    the effect of geometric magnification or calibration against an object of known size" —
+    that is what the second exists for. This is §5.2
     of this specification, arrived at independently: a scale describes one pixel grid,
     and writing it onto another grid gives a confident wrong answer.
-  - `EstimatedRadiographicMagnificationFactor` (0018,1114) relates the two planes, the
-    way §6.3 relates a resized copy to the grid the scale was measured on.
-  - `PixelSpacingCalibrationType` (0028,0A02) and `CalibrationDescription` record *how*
+  - `EstimatedRadiographicMagnificationFactor` (0018,1114) relates the detector's plane to
+    the object's: source-to-detector distance over source-to-object distance. It is the
+    geometry of §4.4, where a part nearer the camera is drawn larger.
+  - `PixelSpacingCalibrationType` (0028,0A02) and `PixelSpacingCalibrationDescription`
+    (0028,0A04) record *how*
     the calibration was obtained — a controlled value beside free text, which is what
     `method` and `methodNote` are here.
 
   Projection radiography had to make these distinctions explicit because getting them
   wrong is clinically consequential (NEMA CP-586). Nothing about them is medical: they
   follow from measuring anything at all from an image.
-- **Metamorfoze, FADGI, ISO 19264-1**: image quality, not scale. They say how well a
-  picture is taken; ISM says how large what it shows is. The two are complementary.
+- **Metamorfoze, FADGI, ISO 19264-1**: image quality, with the sampling rate among the things
+  measured. ISO 19264-1 measures sampling rate and reproduction scale against a target, and FADGI
+  sets pixels-per-inch aims with a tolerance. For a flat original that is the scale, measured
+  with care; the result is a quality report and a resolution tag, with no plane, no method and
+  no uncertainty in the file. An institution that already images to these guidelines has the
+  number ISM needs at every check. The two are complementary.
+- **The same idea, standardised before.** ISM is not the first place a file may say how large a
+  pixel is on the subject:
+  - **PNG `sCAL`**, "physical scale of image subject", a registered chunk in the PNG extensions: one
+    pixel's width and height in metres (or radians), written for maps, photomicrographs and
+    floor plans, and set apart from `pHYs`, which is the size the image is to be printed at.
+  - **MIX / NISO Z39.87** (2006): `samplingFrequencyPlane` may be "object plane", beside
+    `xSamplingFrequency` and `ySamplingFrequency`.
+  - **IIIF Physical Dimensions** (2014) and `spatialScale` in the draft of Presentation 4.0:
+    §7.2.
+
+  None of them is in wide use for pictures of objects: little writes them, and less reads them.
+  What ISM adds is the reference grid, which makes a resized copy safe to read; the method and
+  the uncertainty; the plane; regions (§14); and models (§13).
 
 ## 8. Example
 
@@ -404,8 +523,11 @@ a writer or reader conforms when it passes them.
 
 ## 12. Open questions
 
-1. **Crop to the same aspect ratio** cannot be detected from the dimensions (§5.4). Add a
-   content fingerprint of the reference grid, or accept the rule that writers must update?
+1. **Crop to the same aspect ratio** cannot be detected from the dimensions (§5.4): answered in
+   0.3 with `ism:fingerprint` (§4.5), for a file that carries one and a reader that has the
+   pixels. Still open: the threshold, set from three photographs; crops smaller than about a
+   twentieth, which pass; and whether a file without a fingerprint should still be read by
+   assumption (§6.3) or refused.
 2. **Units**: millimetres only, or allow micrometres for very small objects? (A real field:
    `ism:scale` = 0.001 is already 1 µm/px.)
 3. **Several planes**: answered in 0.3 — a part of the picture in another plane carries its own
@@ -422,8 +544,8 @@ a writer or reader conforms when it passes them.
 8. **Terms at IPTC.** The roles and content types of §14.8 are to be proposed for IPTC's
    NewsCodes. How IPTC takes such proposals is not yet known.
 9. **Regions in a turned copy.** A reader cannot place regions in a copy whose pixels were turned
-   by a quarter turn (§14.6). Would a field that records which way, or the regions' own outer
-   box, be worth adding?
+   by a quarter turn (§14.6). Since 0.3 the fingerprint says which way a copy was turned
+   (§4.5), for a file that has one. The reference readers do not yet use it to place regions.
 10. **A region's provenance.** A region without a scale of its own has no `ism:measuredBy` or
     `ism:measuredAt` for its object dimensions, as the image has none for its own. Is that
     enough, when several objects in one picture were measured at different times?
@@ -507,7 +629,8 @@ root layer's `customLayerData`, as a dictionary named `ism`, which speaks for th
   `ism:referenceExtent` a `double[]` of three.
 - `metersPerUnit` in the dictionary records the layer's `metersPerUnit` when the fields were
   written, so that the unit the extent is in can be read without the stage. It is unset when the
-  layer does not state one.
+  layer does not state one. USD itself then falls back on 0.01, the centimetre, not on the
+  metre; a reader MUST NOT take an unset `metersPerUnit` for 1.
 - In a USDZ the root layer is the package's first file, as the format has it. A reader MUST take
   the dictionary from the root layer, not from a layer it sublayers or references.
 - A writer that adds ISM to a layer whose `customLayerData` holds other entries MUST keep them. A
@@ -924,7 +1047,7 @@ measuring yet. Until they do, ISM gives four terms an address under its namespac
 4. `rId` MUST be unique among the image's regions, as IPTC requires, and `Name` SHOULD be.
 5. **The image's object and `ism:objectBox`.** `ism:objectBox` stays, for readers that know one
    box. When the object it describes also has a region, that region SHOULD have IPTC's role
-   `mainSubjectArea`, of which IPTC allows one per image, together with ISM's *measured object*,
+   `mainSubjectArea`, of which a picture normally has one, together with ISM's *measured object*,
    and `ism:objectBox` SHOULD be the region's outer bounds on the reference grid, rounded outwards
    to whole pixels. A polygon then follows the object's outline, and the box is the box around it.
    When the picture shows several objects and none of them is the image's own, a writer leaves

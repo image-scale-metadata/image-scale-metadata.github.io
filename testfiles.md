@@ -35,6 +35,26 @@ fix this from the reading end; it is why §5.4 puts the duty on the writer — a
 MUST rewrite the fields or remove them. The file is in the set so that implementers meet the limit
 on purpose rather than by accident.
 
+## The fingerprint (PNG), since 0.3
+
+One made picture of 600 × 400 px at 0.1 mm/px, given `ism:fingerprint` (§4.5), and five copies made
+from its pixels by a program that knows nothing of ISM: the packet is the same in all six. Each
+has two answers: the one a reader gives when it has the pixels and compares, and the one it gives
+from the dimensions alone. The second is in the table to show what the fingerprint is for.
+
+| File | What it is | With the pixels | From the dimensions alone |
+|---|---|---|---|
+| `40-png-fingerprint.png` | As measured, 600 × 400 | 0.1 mm/px | 0.1 mm/px |
+| `41-png-fingerprint-resized-half.png` | Resized to 300 × 200 | 0.2 mm/px, checked | 0.2 mm/px |
+| `42-png-fingerprint-turned-resized-half.png` | Resized, then turned a quarter turn clockwise: 200 × 300 | 0.2 mm/px, checked; turned 90° clockwise | 0.2 mm/px |
+| `43-png-fingerprint-cropped-same-shape.png` | The middle 300 × 200 cut out | **No scale.** Cropped | 0.2 mm/px, which is wrong: the pixels are still 0.1 mm |
+| `44-png-fingerprint-cropped-upright.png` | An upright 266 × 400 cut out | **No scale.** Cropped | 0.15 mm/px, which is wrong |
+| `45-png-fingerprint-cropped-by-a-twentieth.png` | 570 × 380, a twentieth cut from the edges | **No scale.** Cropped | 0.105263 mm/px, which is wrong |
+
+`fingerprints.json` holds the fingerprint each of the six pictures has now, and the fingerprints
+of one run of made bytes read as grey, grey with alpha, RGB and RGBA. An implementation's
+arithmetic is right when it gives the same characters.
+
 ## Objects, as they leave PHOTARCH
 
 Four files written by an implementation, for reading against: `ism-a123-calipers.jpg`
@@ -106,7 +126,8 @@ warnings, and the packet is read by glTF-Transform's `KHR_xmp_json_ld` support.
 
 `node tools/make-testfiles.mjs <photograph.jpg> <mm-per-px>` makes the JPEG set from a photograph
 of your own; `node tools/make-raster-testfiles.mjs` makes the PNG and TIFF set, and the region set
-but file 36, from nothing at all, and `node tools/make-model-testfiles.mjs` the models. File 36 is
+but file 36, from nothing at all, `node tools/make-fingerprint-testfiles.mjs` the fingerprint set, and
+`node tools/make-model-testfiles.mjs` the models. File 36 is
 made from file 30 by ExifTool, as its row says.
 Both use the reference writer, so the files and the library cannot drift apart.
 

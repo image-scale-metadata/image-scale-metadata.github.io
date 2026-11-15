@@ -5,7 +5,7 @@
 // line is drawn (§14).
 // Everything happens in the browser; no file leaves the machine.
 import {
-  IPTC_ROLES, ISM_ROLES, METHODS, embedXmp, findXmp, formatMm, gridFor, hasRole, jpegHasXmpSegment, jpegOrientation, lengthCheck,
+  IPTC_ROLES, ISM_ROLES, METHODS, embedXmp, findXmp, fingerprintOf, formatMm, gridFor, hasRole, jpegHasXmpSegment, jpegOrientation, lengthCheck,
   measure, mergeIsmIntoXmp, niceLength, readIsm, readRegions, regionScales, scaleFor,
 } from '../js/ism.js'
 
@@ -61,12 +61,41 @@ async function open(file) {
   // Regions and the object box are on the stored grid, before orientation (§14.6).
   const orientation = isJpeg ? jpegOrientation(bytes) : 1
   const stored = orientation >= 5 ? { w: img.naturalHeight, h: img.naturalWidth } : { w: img.naturalWidth, h: img.naturalHeight }
+  // The fingerprint of the picture as it is now, to tell a resized copy from a
+  // cropped one (§4.5). The browser draws a JPEG turned by its orientation, so
+  // for the stored grid of a picture stored on its side it is left out, and
+  // the regions are then placed as they were before 0.3.
+  const print = fields?.fingerprint ? printOf(img) : null
+  const storedPrint = orientation >= 5 ? null : print
   current = {
-    file, bytes, img, fields, regions, isJpeg, orientation, stored,
-    result: scaleFor(fields, img.naturalWidth, img.naturalHeight, regions),
-    readings: regionScales(fields, regions, stored.w, stored.h),
+    file, bytes, img, fields, regions, isJpeg, orientation, stored, storedPrint,
+    result: scaleFor(fields, img.naturalWidth, img.naturalHeight, regions, print),
+    readings: regionScales(fields, regions, stored.w, stored.h, storedPrint),
   }
   show()
+}
+
+/**
+ * The fingerprint of the picture as the browser draws it (§4.5). To compare,
+ * a copy drawn no larger than 1024 pixels is enough, a resized copy being what
+ * the fingerprint is made to recognise; to write (`exact`), every pixel is read.
+ * Null when the browser will not give the pixels.
+ */
+function printOf(img, exact = false) {
+  const w = img.naturalWidth, h = img.naturalHeight
+  const k = exact ? 1 : Math.min(1, 1024 / Math.max(w, h))
+  const cw = Math.max(1, Math.round(w * k)), ch = Math.max(1, Math.round(h * k))
+  if (cw * ch > 40e6) return null
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = cw
+    canvas.height = ch
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    context.drawImage(img, 0, 0, cw, ch)
+    return fingerprintOf(context.getImageData(0, 0, cw, ch).data, cw, ch, 4)
+  } catch {
+    return null
+  }
 }
 
 function show() {
@@ -94,6 +123,10 @@ function show() {
       ['Scale', fields.scale !== undefined ? `${fields.scale} mm/px` : undefined],
       ['Pixels', fields.referenceWidth ? `${fields.referenceWidth} × ${fields.referenceHeight} px` : undefined],
       ['Version', fields.version],
+      ['Read as', !result.resized && !result.cropped ? undefined
+        : result.cropped ? 'not the whole picture: the fingerprint does not match (§4.5)'
+          : result.checked ? 'a resized copy, checked against the fingerprint (§4.5)'
+            : `a resized copy, by assumption: ${fields.fingerprint ? 'the fingerprint could not be checked' : 'the file has no fingerprint to check it by'} (§6.3)`],
     ])
     section('How it was measured', [
       ['Method', fields.method && (METHODS.includes(fields.method) ? fields.method : `${fields.method} (unknown)`)],
@@ -247,6 +280,10 @@ function write(lengthMm, method, measuredBy) {
       measuredAt: new Date().toISOString().slice(0, 10),
       software: SOFTWARE,
     }
+    // The fingerprint is of the stored pixels (§5.8). The browser gives them
+    // as stored only when no EXIF orientation turns the picture.
+    const print = jpegOrientation(bytes) === 1 ? printOf(img, true) : null
+    if (print) fields.fingerprint = print
     const out = embedXmp(bytes, mergeIsmIntoXmp(existing, fields))
     const name = file.name.replace(/(\.[^.]+)?$/, `-ism.${kind.ext}`)
     const blob = new Blob([out], { type: kind.type })
@@ -362,7 +399,7 @@ function overlay(w, h, fields, result) {
   const unit = Math.max(w, h) / 600 // one "screen pixel" at a typical display size
   // Whether the stored pixels still stand as they were measured: then the box
   // and the regions can be placed, turned only by the EXIF orientation.
-  const grid = fields ? gridFor(fields, current.stored.w, current.stored.h) : { ok: false }
+  const grid = fields ? gridFor(fields, current.stored.w, current.stored.h, current.storedPrint) : { ok: false }
 
   drawRegions(svg, unit)
 
@@ -438,7 +475,7 @@ function overlay(w, h, fields, result) {
 function lengthOf(x0, y0, x1, y1, px) {
   const { fields, regions, stored, result } = current
   if (!regions.length) return result.ok ? formatMm(px * result.scale) : `${px.toFixed(0)} px`
-  const m = measure(fields, regions, stored.w, stored.h, toStored(x0, y0), toStored(x1, y1))
+  const m = measure(fields, regions, stored.w, stored.h, toStored(x0, y0), toStored(x1, y1), current.storedPrint)
   if (m.ok) return formatMm(m.mm)
   return /different scales|overlap/.test(m.reason) ? `${px.toFixed(0)} px — two scales` : `${px.toFixed(0)} px`
 }

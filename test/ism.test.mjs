@@ -285,3 +285,14 @@ function crc32(bytes) {
   }
   return (c ^ 0xffffffff) >>> 0
 }
+
+test('numbers: only what XMP writes is a number, the same in every reader (§4.1)', () => {
+  const packet = (scale, width) => `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:ism="${ISM_NS}" ism:version="0.1" ism:scale="${scale}" ism:referenceWidth="${width}" ism:referenceHeight="400"/></rdf:RDF></x:xmpmeta>`
+  const answer = (scale, width) => { const r = scaleFor(parseIsm(packet(scale, width)), 600, 400); return r.ok ? r.scale : null }
+  assert.equal(answer('0.1', '600'), 0.1)
+  assert.equal(answer('1e-1', '600'), 0.1, 'an exponent is a number')
+  assert.equal(answer(' 0.1 ', '600'), 0.1, 'space around it is not part of it')
+  // Each of these was read as a scale by one reader and refused by the other.
+  for (const scale of ['0x1', '1_0', '0,1', 'Infinity', 'NaN', '']) assert.equal(answer(scale, '600'), null, `scale "${scale}"`)
+  for (const width of ['600.0', '6e2', '0x258', '6_00']) assert.equal(answer('0.1', width), null, `width "${width}"`)
+})

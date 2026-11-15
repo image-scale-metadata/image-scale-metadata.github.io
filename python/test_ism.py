@@ -299,5 +299,29 @@ class Models(unittest.TestCase):
         self.assertEqual(py, js)
 
 
+
+class NumbersAsXmpWritesThem(unittest.TestCase):
+    """Only what XMP writes is a number, the same in every reader (§4.1)."""
+
+    @staticmethod
+    def answer(scale, width):
+        packet = ('<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+                  '<rdf:Description rdf:about="" xmlns:ism="%s" ism:version="0.1" ism:scale="%s" '
+                  'ism:referenceWidth="%s" ism:referenceHeight="400"/></rdf:RDF></x:xmpmeta>' % (ism.ISM_NS, scale, width))
+        ok, value, _ = ism.scale_for(ism.parse(packet), 600, 400)
+        return value if ok else None
+
+    def test_numbers(self):
+        self.assertEqual(self.answer("0.1", "600"), 0.1)
+        self.assertEqual(self.answer("1e-1", "600"), 0.1)
+        self.assertEqual(self.answer(" 0.1 ", "600"), 0.1)
+
+    def test_what_is_not_a_number(self):
+        for scale in ("0x1", "1_0", "0,1", "Infinity", "NaN", ""):
+            self.assertIsNone(self.answer(scale, "600"), scale)
+        for width in ("600.0", "6e2", "0x258", "6_00"):
+            self.assertIsNone(self.answer("0.1", width), width)
+
+
 if __name__ == "__main__":
     unittest.main()
