@@ -371,8 +371,10 @@ Dimensions service carries the same number:
 ```
 
 `physicalScale` is `ism:scale` rescaled to the canvas's width by §6.3. IIIF itself notes
-that physical dimensions are often missing or unreliable, and records that a label for how far
-to trust them was proposed and deferred; ISM's method and uncertainty are that label.
+that physical dimensions are often missing or unreliable. A field for how far to trust them, and
+a list of methods by which the scale was found, were proposed in 2014 and closed unfixed in 2016
+for want of interest in the service itself (IIIF/api issue 293); ISM's method and uncertainty are
+what was asked for there.
 
 The draft of Presentation 4.0 (version 4.0.0, not yet stable in November 2026) has
 `spatialScale` on a Canvas: a Quantity in metres for one canvas unit. That is `ism:scale` ÷ 1000,
