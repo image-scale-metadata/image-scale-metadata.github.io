@@ -5,6 +5,13 @@ one picture can carry a scale per plane and a size per object; 0.2 added
 three-dimensional models. Nothing in either changes what a file of 0.1 means.
 The published texts of 0.1 and 0.2 are kept in `0.1/` and `0.2/`.
 
+The specification is in two parts. **The core** (`index.md`) is small: the scale,
+the pixel grid it was measured on, how it was measured and how certainly, the
+plane, and a fingerprint that tells a cropped copy from a resized one. **The
+extensions** are experimental and a reader of the core need not know them: the
+object's own size (§4.3), three-dimensional models (`models/`, §13) and image
+regions (`regions/`, §14).
+
 A small, open format for carrying the true scale of an image inside the image
 file itself: how many millimetres one pixel covers on the object, which pixel
 grid that holds for, and how it was measured. Any program can then draw a
