@@ -84,6 +84,16 @@ class Fingerprint(unittest.TestCase):
         self.assertTrue(ism.scale_for({**fields, "fingerprint": "z9:abc"}, w, h, None, mark)[0])
         self.assertTrue(ism.scale_for({**fields, "fingerprint": even}, w, h, None, mark)[0])
 
+    def test_the_reference_size_is_not_proof_of_the_same_picture(self):
+        fields, w, h, mark = open_file("40-png-fingerprint.png")
+        crop = open_file("43-png-fingerprint-cropped-same-shape.png")[3]
+        same = ism.grid_for(fields, w, h, mark)
+        self.assertEqual([same["ok"], same["resized"], same["factor"], same.get("checked")], [True, False, 1, True])
+        # The crop enlarged back to the reference size has the crop's fingerprint and the whole picture's dimensions.
+        enlarged = ism.grid_for(fields, w, h, crop)
+        self.assertEqual([enlarged["ok"], enlarged.get("cropped")], [False, True])
+        self.assertTrue(ism.grid_for(fields, w, h)["ok"], "without the pixels it is read as before")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -412,8 +412,18 @@ export function gridFor(fields, width, height, current = null) {
   if (!(Number.isInteger(rw) && rw > 0 && Number.isInteger(rh) && rh > 0)) {
     return { ok: false, none: true, reason: 'The image has no reference grid: referenceWidth and referenceHeight are missing or not valid.' }
   }
-  if (width === rw && height === rh) return { ok: true, resized: false, turned: false, factor: 1 }
-  if (width === rh && height === rw) return { ok: true, resized: false, turned: true, factor: 1 }
+  // The reference size itself. It is not proof of the same picture: a crop enlarged back
+  // to that size has it too, and only the fingerprint tells the two apart (§4.5).
+  for (const [same, turned] of [[width === rw && height === rh, false], [width === rh && height === rw, true]]) {
+    if (!same) continue
+    const print = current && fields.fingerprint ? fingerprintMatch(fields.fingerprint, current, rw === rh ? null : turned) : { checkable: false }
+    if (!print.checkable) return { ok: true, resized: false, turned, factor: 1 }
+    if (print.match) return { ok: true, resized: false, turned: rw === rh ? print.turn % 180 !== 0 : turned, factor: 1, checked: true, turn: print.turn, mirrored: print.mirrored }
+    return {
+      ok: false, cropped: true,
+      reason: `The image is ${width} × ${height} px, the size the scale was set on, but it does not show the whole of that picture: it has been cropped and enlarged, or changed since, so the scale no longer applies (§4.5).`,
+    }
+  }
   // Resized? Same aspect ratio, either way round. The dimensions cannot tell a
   // resized copy from one cropped to the same shape; the fingerprint can (§4.5).
   const square = Math.abs(rw / rh - 1) <= ASPECT_TOLERANCE

@@ -83,3 +83,13 @@ test('fingerprint: what cannot be checked is read as before (§6.3)', () => {
   assert.equal(scaleFor({ ...f.fields, fingerprint: 'z9:abc' }, f.width, f.height, null, f.print).ok, true)
   assert.equal(scaleFor({ ...f.fields, fingerprint: even }, f.width, f.height, null, f.print).ok, true)
 })
+
+test('fingerprint: the reference size is not proof of the same picture (§6.2)', () => {
+  const whole = open('40-png-fingerprint.png'), crop = open('43-png-fingerprint-cropped-same-shape.png')
+  const same = gridFor(whole.fields, whole.width, whole.height, whole.print)
+  assert.deepEqual([same.ok, same.resized, same.factor, same.checked], [true, false, 1, true], 'the file itself, checked')
+  // The crop enlarged back to the reference size has the crop's fingerprint and the whole picture's dimensions.
+  const enlarged = scaleFor(whole.fields, whole.width, whole.height, null, crop.print)
+  assert.deepEqual([enlarged.ok, enlarged.cropped], [false, true], 'a crop enlarged back to the reference size')
+  assert.equal(scaleFor(whole.fields, whole.width, whole.height).ok, true, 'without the pixels it is read as before')
+})

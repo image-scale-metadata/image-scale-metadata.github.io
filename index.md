@@ -333,7 +333,10 @@ A reader ignores a fingerprint whose scheme it does not know.
 2. If the current grid equals the reference grid, the scale is `ism:scale`. So it is when the
    current grid is the reference grid with width and height exchanged: the pixels were turned by
    a quarter turn, or are shown through an EXIF orientation (rule 5), and turning does not
-   change the size of a pixel.
+   change the size of a pixel. The reference size is not proof of the same picture, since a
+   crop enlarged back to it has that size too: when the file has `ism:fingerprint` and the
+   reader has the pixels, the reader MUST compare here as well (§4.5), and MUST NOT show a
+   scale for a picture that does not match.
 3. If the current grid differs but has the same aspect ratio (within 0.5 %), as it stands or
    with width and height exchanged, the picture is either a uniform resize of the reference
    grid or a crop of it to the same shape.

@@ -481,10 +481,21 @@ def grid_for(fields: dict[str, Any] | None, width: int, height: int, current: st
     if not (isinstance(rw, int) and not isinstance(rw, bool) and rw > 0 and isinstance(rh, int) and not isinstance(rh, bool) and rh > 0):
         return {"ok": False, "none": True,
                 "reason": "The image has no reference grid: referenceWidth and referenceHeight are missing or not valid."}
-    if (width, height) == (rw, rh):
-        return {"ok": True, "resized": False, "turned": False, "factor": 1}
-    if (width, height) == (rh, rw):
-        return {"ok": True, "resized": False, "turned": True, "factor": 1}
+    # The reference size itself. It is not proof of the same picture: a crop enlarged back
+    # to that size has it too, and only the fingerprint tells the two apart (§4.5).
+    for same, turned in (((width, height) == (rw, rh), False), ((width, height) == (rh, rw), True)):
+        if not same:
+            continue
+        mark = (fingerprint_match(fields.get("fingerprint"), current, None if rw == rh else turned)
+                if current and (fields or {}).get("fingerprint") else {"checkable": False})
+        if not mark["checkable"]:
+            return {"ok": True, "resized": False, "turned": turned, "factor": 1}
+        if mark["match"]:
+            return {"ok": True, "resized": False, "turned": mark["turn"] % 180 != 0 if rw == rh else turned, "factor": 1,
+                    "checked": True, "turn": mark["turn"], "mirrored": mark["mirrored"]}
+        return {"ok": False, "cropped": True, "reason": (
+            "The image is %d × %d px, the size the scale was set on, but it does not show the whole of that picture: "
+            "it has been cropped and enlarged, or changed since, so the scale no longer applies (§4.5)." % (width, height))}
     # The dimensions cannot tell a resized copy from one cropped to the same shape; the fingerprint can (§4.5).
     square = abs(rw / rh - 1) <= ASPECT_TOLERANCE
     cropped = False
